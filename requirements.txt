@@ -15,7 +15,7 @@ passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
 
 # Vector Database and Embeddings
-qdrant-client==1.7.0
+qdrant-client==1.15.1
 openai==1.12.0
 numpy==1.24.3
 tiktoken==0.5.2

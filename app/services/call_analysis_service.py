@@ -51,7 +51,7 @@ class CallAnalysisService:
             bool: True if initialization successful
         """
         try:
-            if not settings.OPENAI_API_KEY:
+            if not settings.openai_api_key:
                 logger.error("OpenAI API key not configured")
                 return False
             
@@ -400,7 +400,14 @@ Respond with ONLY the JSON object, no other text.
             str: The response text
         """
         try:
-            response = await self.client.chat.completions.create(
+            if not self.client:
+                # Fallback to direct API call if client isn't initialized
+                import openai
+                client = openai.AsyncClient(api_key=settings.openai_api_key)
+            else:
+                client = self.client
+                
+            response = await client.chat.completions.create(
                 model="gpt-4o-mini",  # Use faster, cheaper model for analysis
                 messages=[
                     {"role": "system", "content": "You are an expert call analyst. Provide accurate, concise analysis."},

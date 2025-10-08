@@ -102,7 +102,7 @@ async def handle_webrtc_signaling(
             # Configure pipeline for WebRTC client (use PCM format for better quality)
             pipeline_config = {
                 "tts_output_format": "pcm_16000",  # High-quality format for WebRTC
-                "stt_model": "nova-3",  # Best quality STT
+                "stt_model": "nova-2",  # Use stable nova-2 model that works with our API key
                 "llm_model": "gpt-4o-mini"  # Fast response model
             }
             

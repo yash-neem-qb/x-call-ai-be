@@ -6,6 +6,7 @@ Provides a clean interface for generating AI responses.
 import json
 import logging
 import aiohttp
+import openai
 from typing import Optional, Dict, Any, Callable, Coroutine, List
 
 from app.config.settings import settings
@@ -28,11 +29,15 @@ class OpenAILLMService:
             "openai_system_prompt",
             "You are a helpful voice assistant. Be concise and conversational.",
         )
+        # Initialize client property to avoid 'no attribute' errors
+        self.client = None
     async def initialize(self):
         """
         Initialize the LLM service.
-        This is a no-op for OpenAI as connections are per-request.
+        Creates an OpenAI client instance for other services to use.
         """
+        import openai
+        self.client = openai.AsyncClient(api_key=self.api_key)
         logger.info("LLM service initialized")
         return True
     

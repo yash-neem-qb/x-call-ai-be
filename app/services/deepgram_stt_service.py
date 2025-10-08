@@ -86,7 +86,7 @@ class DeepgramSTTService:
             
             logger.info(f"Creating Deepgram transcription session with model: {transcription_model}, language: {transcription_language}")
             
-            # Build query parameters according to Deepgram API documentation
+Make sure you configure your "user.name" and "user.email" in git.                # Build query parameters according to Deepgram API documentation
             # Use best options for each model type with noise suppression
             # Configure audio format based on stream type
             if is_web_stream:
@@ -98,41 +98,51 @@ class DeepgramSTTService:
                 encoding = self.encoding
                 sample_rate = self.sample_rate
             
+            # Ensure model exists in supported models list
+            if transcription_model not in self.supported_models:
+                logger.warning(f"Model {transcription_model} not in supported list, falling back to nova-2")
+                transcription_model = "nova-2"
+            
+            # Use a minimal set of parameters that we know work from our test_deepgram.py
+            # This ensures basic connectivity, we can add more parameters once basic connection works
             params = {
                 "model": transcription_model,
                 "encoding": encoding,
                 "sample_rate": sample_rate,
                 "channels": self.channels,
-                "language": transcription_language,
-                "punctuate": "true",
-                "smart_format": "true",
-                "interim_results": "true",
-                # Add noise suppression parameters
-                "noise_reduction": "true",  # Enable Deepgram's noise reduction
-                "profanity_filter": "false",  # Keep profanity filter off for calls
-                # Set inactivity timeout to 30 seconds to prevent premature disconnections
-                "inactivity_timeout": "30",
+                "language": transcription_language
             }
-
-            # Add call-specific extras with optimized VAD for reduced background noise
-            if transcription_model.startswith("nova-2"):
-                # Low-latency call tuned with minimal VAD padding
+            
+            # For debugging only - add these once connection is stable
+            if False:  # Disable all extra parameters until we have basic connectivity
                 params.update({
-                    "filler_words": "true",
-                    "diarize": "true",
-                    "endpointing": "250",  # Keep original low latency
-                    "utterance_end_ms": "600",  # Keep original low latency
-                    "vad_events": "true",
-                    "vad_turn_padding": "100",  # Minimal padding to reduce false positives
+                    "punctuate": "true",
+                    "smart_format": "true",
+                    "interim_results": "true",
+                    "noise_reduction": "true",
+                    "profanity_filter": "false",
+                    "inactivity_timeout": "30"
                 })
-            elif transcription_model.startswith("nova-3"):
-                # Enable best features for nova-3 models with minimal VAD padding
-                params.update({
-                    "diarize": "true",
-                    "endpointing": "300",  # Keep original low latency
-                    "vad_events": "true",
-                    "vad_turn_padding": "150",  # Minimal padding to reduce false positives
-                })
+                
+                # Add call-specific extras with optimized VAD for reduced background noise
+                if transcription_model.startswith("nova-2"):
+                    # Low-latency call tuned with minimal VAD padding
+                    params.update({
+                        "filler_words": "true",
+                        "diarize": "true",
+                        "endpointing": "250",
+                        "utterance_end_ms": "600",
+                        "vad_events": "true",
+                        "vad_turn_padding": "100"
+                    })
+                elif transcription_model.startswith("nova-3"):
+                    # Enable best features for nova-3 models with minimal VAD padding
+                    params.update({
+                        "diarize": "true",
+                        "endpointing": "300",
+                        "vad_events": "true",
+                        "vad_turn_padding": "150"
+                    })
 
             # Log a concise view of what we are actually sending to Deepgram
             features_snapshot = {
@@ -170,7 +180,7 @@ class DeepgramSTTService:
                     websockets.connect(
                         deepgram_url,
                         extra_headers={
-                            # Use lowercase 'token' scheme as per successful smoketest
+                            # Use lowercase 'token' scheme as per our successful test
                             "Authorization": f"token {self.api_key}"
                         }
                     ),
