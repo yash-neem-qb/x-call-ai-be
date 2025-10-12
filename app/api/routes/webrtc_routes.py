@@ -159,6 +159,12 @@ async def handle_webrtc_signaling(
                     logger.info("Client ready for audio communication")
                     peer_connection_ready = True
                     
+                    # Send pipeline ready signal to frontend
+                    await websocket.send_json({
+                        "type": "pipeline_ready",
+                        "message": "Pipeline initialized successfully"
+                    })
+                    
                     # Send a test greeting to keep the pipeline active
                     if pipeline:
                         await asyncio.sleep(0.5)  # Wait a bit for connection to stabilize
