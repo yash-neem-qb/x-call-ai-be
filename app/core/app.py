@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config.settings import settings
 from app.core.logging import setup_logging
-from app.api.routes import call_routes, call_logs_routes, websocket_routes, assistant_routes, inbound_routes, organization_routes, auth_routes, knowledge_routes, dashboard_routes, rag_routes, voice_routes, webrtc_routes, campaign_routes
+from app.api.routes import call_routes, call_logs_routes, websocket_routes, assistant_routes, inbound_routes, organization_routes, auth_routes, knowledge_routes, dashboard_routes, rag_routes, voice_routes, webrtc_routes, campaign_routes, tool_routes
 # Removed old call_handler - using unified_pipeline_manager now
 from app.db.database import init_db
 
@@ -108,6 +108,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_routes.router)
     app.include_router(voice_routes.router)
     app.include_router(campaign_routes.router)
+    app.include_router(tool_routes.router)
     # Removed duplicate call-status route; using /api/v1/call-status from call_routes
     
     return app

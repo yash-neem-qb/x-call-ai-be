@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 from app.services.llm_service import openai_llm_service
 from app.services.knowledge_service import knowledge_service
+from app.db.crud.tool_crud import get_assistant_tools
+from app.db.database import get_db
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -122,17 +124,38 @@ class RAGEnhancedLLMService:
                 custom_system_prompt, knowledge_context
             )
             
-            # Step 3: Generate response using enhanced context
-            response = await self.llm_service.generate_response(
-                text=text,
-                on_content_delta=on_content_delta,
-                conversation_history=conversation_history,
-                custom_system_prompt=enhanced_system_prompt,
-                model=model,
-                should_stop=should_stop
-            )
+            # Step 3: Get assistant tools if assistant_id is provided
+            assistant_tools = []
+            if assistant_id and organization_id:
+                try:
+                    db = next(get_db())
+                    assistant_tools = get_assistant_tools(db, assistant_id, organization_id, enabled_only=True)
+                    db.close()
+                except Exception as e:
+                    logger.warning(f"Failed to load assistant tools: {e}")
             
-            # Step 4: Log knowledge usage if enabled
+            # Step 4: Generate response using enhanced context and tools
+            if assistant_tools:
+                response = await self.llm_service.generate_response_with_tools(
+                    text=text,
+                    on_content_delta=on_content_delta,
+                    assistant_tools=assistant_tools,
+                    conversation_history=conversation_history,
+                    custom_system_prompt=enhanced_system_prompt,
+                    model=model,
+                    should_stop=should_stop
+                )
+            else:
+                response = await self.llm_service.generate_response(
+                    text=text,
+                    on_content_delta=on_content_delta,
+                    conversation_history=conversation_history,
+                    custom_system_prompt=enhanced_system_prompt,
+                    model=model,
+                    should_stop=should_stop
+                )
+            
+            # Step 5: Log knowledge usage if enabled
             if self.config.log_knowledge_usage and knowledge_results:
                 self._log_knowledge_usage(text, knowledge_results, response, time.time() - start_time)
             
@@ -144,14 +167,36 @@ class RAGEnhancedLLMService:
             # Fallback to general LLM if configured
             if self.config.fallback_to_general_llm:
                 logger.info("Falling back to general LLM service")
-                return await self.llm_service.generate_response(
-                    text=text,
-                    on_content_delta=on_content_delta,
-                    conversation_history=conversation_history,
-                    custom_system_prompt=custom_system_prompt,
-                    model=model,
-                    should_stop=should_stop
-                )
+                
+                # Try to get tools for fallback as well
+                assistant_tools = []
+                if assistant_id and organization_id:
+                    try:
+                        db = next(get_db())
+                        assistant_tools = get_assistant_tools(db, assistant_id, organization_id, enabled_only=True)
+                        db.close()
+                    except Exception as e:
+                        logger.warning(f"Failed to load assistant tools for fallback: {e}")
+                
+                if assistant_tools:
+                    return await self.llm_service.generate_response_with_tools(
+                        text=text,
+                        on_content_delta=on_content_delta,
+                        assistant_tools=assistant_tools,
+                        conversation_history=conversation_history,
+                        custom_system_prompt=custom_system_prompt,
+                        model=model,
+                        should_stop=should_stop
+                    )
+                else:
+                    return await self.llm_service.generate_response(
+                        text=text,
+                        on_content_delta=on_content_delta,
+                        conversation_history=conversation_history,
+                        custom_system_prompt=custom_system_prompt,
+                        model=model,
+                        should_stop=should_stop
+                    )
             else:
                 return "I'm sorry, I couldn't process that right now."
     

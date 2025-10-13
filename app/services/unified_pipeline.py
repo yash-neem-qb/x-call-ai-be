@@ -436,7 +436,7 @@ class UnifiedCallPipeline:
                     conversation_history=recent_history,
                     custom_system_prompt=system_prompt,
                     model=self.config.llm_model,
-                    organization_id=str(self.assistant_config.get("organization_id")) if self.assistant_config else None,
+                    organization_id=str(self.assistant_config.get("organizationId")) if self.assistant_config else None,
                     assistant_id=str(self.assistant_id) if self.assistant_id else None
                 )
                 

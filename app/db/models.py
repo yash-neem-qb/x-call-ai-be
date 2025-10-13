@@ -107,6 +107,7 @@ class Assistant(Base):
     calls = relationship("Call", back_populates="assistant", cascade="all, delete-orphan")
     knowledge_base = relationship("KnowledgeBase", back_populates="assistant", cascade="all, delete-orphan")
     assigned_phone_numbers = relationship("PhoneNumber", back_populates="assistant")
+    assistant_tools = relationship("AssistantTool", back_populates="assistant", cascade="all, delete-orphan")
     
     def __repr__(self):
         """String representation of the model."""
@@ -674,3 +675,62 @@ class CampaignContact(Base):
     
     # Relationships
     campaign = relationship("Campaign", back_populates="contacts")
+
+
+class Tool(Base):
+    """Tool model for external function calling."""
+    __tablename__ = "tools"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    
+    # Basic information
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    
+    # HTTP configuration
+    method = Column(String(10), nullable=False)  # GET, POST, PUT, DELETE, etc.
+    url = Column(Text, nullable=False)
+    headers = Column(JSON, nullable=True)  # Custom headers
+    parameters = Column(JSON, nullable=True)  # URL parameters
+    body_schema = Column(JSON, nullable=True)  # Request body schema for POST/PUT
+    
+    # Organization and assistant relationships
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    
+    # Tool configuration
+    timeout_seconds = Column(Integer, default=30, nullable=False)
+    retry_count = Column(Integer, default=3, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    organization = relationship("Organization", backref="tools")
+    assistant_tools = relationship("AssistantTool", back_populates="tool", cascade="all, delete-orphan")
+
+
+class AssistantTool(Base):
+    """Many-to-many relationship between assistants and tools."""
+    __tablename__ = "assistant_tools"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    
+    # Foreign keys
+    assistant_id = Column(UUID(as_uuid=True), ForeignKey("assistants.id"), nullable=False)
+    tool_id = Column(UUID(as_uuid=True), ForeignKey("tools.id"), nullable=False)
+    
+    # Tool configuration for this assistant
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    priority = Column(Integer, default=0, nullable=False)  # Higher number = higher priority
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    assistant = relationship("Assistant", back_populates="assistant_tools")
+    tool = relationship("Tool", back_populates="assistant_tools")
