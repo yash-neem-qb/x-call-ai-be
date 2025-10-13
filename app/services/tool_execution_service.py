@@ -25,7 +25,7 @@ class ToolExecutionService:
     async def initialize(self):
         """Initialize the HTTP session."""
         if not self.session:
-            timeout = aiohttp.ClientTimeout(total=300)  # 5 minutes max
+            timeout = aiohttp.ClientTimeout(total=60)  # 1 minute max
             self.session = aiohttp.ClientSession(timeout=timeout)
             logger.info("Tool execution service initialized")
     

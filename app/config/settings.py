@@ -20,31 +20,18 @@ class Settings(BaseSettings):
     
     # OpenAI Configuration
     openai_api_key: str
-    # Default chat model for HTTP completions
-    openai_chat_model: str = "gpt-4o"
-    # Default realtime model for WS completions
-    openai_realtime_model: str = "gpt-4o-realtime-preview"
-    # Default max tokens for completions (name depends on model family)
-    openai_max_tokens: int = 256
-    # Default temperature for non-gpt-5 models
-    openai_temperature: float = 0.8
-    # Default system prompt for LLM
-    openai_system_prompt: str = (
-        "You are a helpful voice assistant. Be concise and conversational."
-    )
-    
-    # ElevenLabs Configuration
+
     elevenlabs_api_key: str
-    elevenlabs_voice_id: str = "hIssydxXZ1WuDorjx6Ic"
+    elevenlabs_output_format: str = "pcm_16000"  # Not in DB - technical format setting (high quality for WebRTC)
     
     # Deepgram Configuration
     deepgram_api_key: str = ""
 
-    # Vector Database Configuration
+    # Vector Database Configuration (from .env)
     vector_qdrant_host: str = "localhost"
     vector_qdrant_port: int = 6333
     vector_qdrant_api_key: Optional[str] = None
-    vector_qdrant_url: Optional[str] = None  # For cloud Qdrant
+    vector_qdrant_url: Optional[str] = None
     
     # Collection Configuration
     vector_knowledge_collection_name: str = "knowledge_base"
@@ -107,6 +94,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"  # Ignore extra environment variables
 
 
 # Global settings instance

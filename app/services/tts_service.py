@@ -22,11 +22,9 @@ class ElevenLabsTTSService:
     def __init__(self):
         """Initialize the TTS service."""
         self.api_key = settings.elevenlabs_api_key
-        self.voice_id = settings.elevenlabs_voice_id
-        self.model_id = "eleven_flash_v2_5"  # Fastest model for lowest latency
-        self.default_output_format = "ulaw_8000"  # Default format compatible with Twilio
+        self.default_output_format = settings.elevenlabs_output_format
         self.active_connections = {}
-        self._greeting_audio = None
+        logger.info(f"🎤 TTS Service initialized with default output format: {self.default_output_format}")
     
     async def initialize(self):
         """
@@ -43,10 +41,10 @@ class ElevenLabsTTSService:
     
     async def create_tts_session(self, session_id: str, 
                                 on_audio_chunk: Callable[[str, str], Coroutine],
-                                voice_id: str = None,
-                                model_id: str = None,
-                                stability: float = None,
-                                similarity_boost: float = None,
+                                voice_id: str,
+                                model_id: str,
+                                stability: float,
+                                similarity_boost: float,
                                 output_format: str = None,
                                 on_completion: Optional[Callable[[str], Coroutine]] = None) -> bool:
         """
@@ -55,30 +53,38 @@ class ElevenLabsTTSService:
         Args:
             session_id: Unique identifier for this session
             on_audio_chunk: Callback for audio chunks
-            voice_id: Voice ID to use (optional)
-            model_id: Model ID to use (optional)
-            stability: Voice stability setting (optional)
-            similarity_boost: Voice similarity boost setting (optional)
-            output_format: Audio output format (optional)
+            voice_id: Voice ID to use (required)
+            model_id: Model ID to use (required)
+            stability: Voice stability setting (required)
+            similarity_boost: Voice similarity boost setting (required)
+            output_format: Audio output format (optional, uses settings default)
             on_completion: Completion callback (optional)
             
         Returns:
             bool: True if session was created successfully
         """
         try:
-            # Use provided parameters or fall back to defaults
-            used_voice_id = voice_id if voice_id is not None else self.voice_id
-            used_model_id = model_id if model_id is not None else self.model_id
-            used_stability = stability if stability is not None else 0.5
-            used_similarity_boost = similarity_boost if similarity_boost is not None else 0.8
-            used_output_format = output_format if output_format is not None else self.default_output_format
+            # Validate required parameters
+            if not voice_id:
+                raise ValueError("Voice ID is required")
+            if not model_id:
+                raise ValueError("Model ID is required")
+            if stability is None:
+                raise ValueError("Stability is required")
+            if similarity_boost is None:
+                raise ValueError("Similarity boost is required")
+            # Use settings default if not provided
+            if not output_format:
+                output_format = self.default_output_format
             
-            logger.info(f"Creating TTS session with voice: {used_voice_id}, model: {used_model_id}, format: {used_output_format}")
+            logger.info(f"🎤 Creating TTS session with voice: {voice_id}, model: {model_id}, format: {output_format}")
+            logger.info(f"🎤 TTS Configuration - Stability: {stability}, Similarity Boost: {similarity_boost}")
+            logger.info(f"🎤 Using output format from settings: {self.default_output_format}")
             
             # Connect to ElevenLabs WebSocket API with fastest settings and maximum timeout
             elevenlabs_url = (
-                f"wss://api.elevenlabs.io/v1/text-to-speech/{used_voice_id}/stream-input"
-                f"?model_id={used_model_id}&output_format={used_output_format}&inactivity_timeout=180"
+                f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input"
+                f"?model_id={model_id}&output_format={output_format}&inactivity_timeout=300"
             )
             
             elevenlabs_ws = await websockets.connect(
@@ -86,34 +92,36 @@ class ElevenLabsTTSService:
                 extra_headers={
                     "xi-api-key": self.api_key
                 },
-                ping_interval=8000,  # 5 minutes - stable connection
-                ping_timeout=8000     # 30 seconds - tolerant timeout
+                ping_interval=30000,  # 30 seconds - stable connection
+                ping_timeout=10000     # 10 seconds - tolerant timeout
             )
             
             # Initialize the connection with fastest generation config
             init_message = {
                 "text": " ",
                 "voice_settings": {
-                    "stability": used_stability,
-                    "similarity_boost": used_similarity_boost,
+                    "stability": stability,
+                    "similarity_boost": similarity_boost,
                     "use_speaker_boost": False,
                 },
                 "generation_config": {
-                    "chunk_length_schedule": [50, 80, 120, 150]  # Faster chunks for lower latency
+                    "chunk_length_schedule": [100, 150, 200, 250]  # Optimized chunks for better performance
                 }
             }
             await elevenlabs_ws.send(json.dumps(init_message))
+            logger.info(f"🎤 TTS Init message sent - Voice settings: stability={stability}, similarity_boost={similarity_boost}")
+            logger.info(f"🎤 TTS Generation config: chunk_length_schedule={init_message['generation_config']['chunk_length_schedule']}")
             
             # Store connection and callback with voice settings
             self.active_connections[session_id] = {
                 "websocket": elevenlabs_ws,
                 "on_audio_chunk": on_audio_chunk,
                 "on_completion": on_completion,
-                "voice_id": used_voice_id,
-                "model_id": used_model_id,
-                "stability": used_stability,
-                "similarity_boost": used_similarity_boost,
-                "output_format": used_output_format,
+                "voice_id": voice_id,
+                "model_id": model_id,
+                "stability": stability,
+                "similarity_boost": similarity_boost,
+                "output_format": output_format,
                 "task": None,
                 "last_activity": asyncio.get_event_loop().time(),
                 # When True, drop outgoing audio chunks (used for barge-in)
@@ -130,7 +138,7 @@ class ElevenLabsTTSService:
             
         except Exception as e:
             logger.error(f"Error creating TTS session: {e}")
-            return False
+            raise e
     
     async def _handle_audio_chunks(self, session_id: str):
         """
@@ -151,7 +159,7 @@ class ElevenLabsTTSService:
             while True:
                 try:
                     # Wait for audio message with timeout
-                    message = await asyncio.wait_for(elevenlabs_ws.recv(), timeout=300.0)
+                    message = await asyncio.wait_for(elevenlabs_ws.recv(), timeout=60.0)
                     data = json.loads(message)
                     
                     # Update last activity time

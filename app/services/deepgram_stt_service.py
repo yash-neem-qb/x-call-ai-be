@@ -22,21 +22,7 @@ class DeepgramSTTService:
     def __init__(self):
         """Initialize the Deepgram STT service."""
         self.api_key = settings.deepgram_api_key
-        # Default audio/input configuration for Twilio Media Streams
-        # Twilio streams 8 kHz, mono, G.711 mu-law by default
-        self.model = "nova-3"
-        self.language = "en-US"
-        self.encoding = "mulaw"
-        self.sample_rate = "8000"
-        self.channels = "1"
-        # List of supported models
-        self.supported_models = [
-            "nova-2", "nova-3", 
-            "nova-3-general", "nova-3-medical",
-            "nova-2-general", "nova-2-meeting", "nova-2-phonecall", 
-            "nova-2-finance", "nova-2-conversational-ai", "nova-2-voicemail",
-            "nova-2-video", "nova-2-medical", "nova-2-drive-thru", "nova-2-automotive"
-        ]
+        # No hardcoded defaults - everything comes from database
         
         # Active connections store
         self.active_connections = {}
@@ -55,8 +41,8 @@ class DeepgramSTTService:
     async def create_transcription_session(self, session_id: str, 
                                           on_transcription_delta: Callable[[str, str, float], Coroutine],
                                           on_transcription_complete: Callable[[str, str], Coroutine],
-                                          model: str = None,
-                                          language: str = None,
+                                          model: str,
+                                          language: str,
                                           on_speech_started: Optional[Callable[[str], Coroutine]] = None,
                                           is_web_stream: bool = False) -> bool:
         """
@@ -66,8 +52,8 @@ class DeepgramSTTService:
             session_id: Unique identifier for this session
             on_transcription_delta: Callback for real-time transcription updates
             on_transcription_complete: Callback for final transcription
-            model: Optional model name to use (defaults to nova-2)
-            language: Optional language code (defaults to en-US)
+            model: Model name to use (required)
+            language: Language code (required)
             on_speech_started: Optional callback when speech is detected
             is_web_stream: Whether this is a web-based stream (16kHz PCM) vs Twilio (8kHz mulaw)
             
@@ -75,16 +61,19 @@ class DeepgramSTTService:
             bool: True if session was created successfully
         """
         try:
-            # Use provided model and language or fall back to defaults
-            transcription_model = model or self.model
-            transcription_language = language or self.language
+            # Validate required parameters
+            if not model:
+                raise ValueError("Model is required")
+            if not language:
+                raise ValueError("Language is required")
 
             # Deepgram expects `en` for many nova-3 variants over WS; normalize if needed
-            if transcription_model.startswith("nova-3") and transcription_language.lower().startswith("en-us"):
+            transcription_language = language
+            if model.startswith("nova-3") and language.lower().startswith("en-us"):
                 logger.info("Normalizing Deepgram language from en-US to en for nova-3")
                 transcription_language = "en"
             
-            logger.info(f"Creating Deepgram transcription session with model: {transcription_model}, language: {transcription_language}")
+            logger.info(f"Creating Deepgram transcription session with model: {model}, language: {transcription_language}")
             
             # Build query parameters according to Deepgram API documentation
             # Use best options for each model type with noise suppression
@@ -95,21 +84,27 @@ class DeepgramSTTService:
                 sample_rate = "16000"
             else:
                 # Twilio streams use 8kHz mulaw
-                encoding = self.encoding
-                sample_rate = self.sample_rate
+                encoding = "mulaw"
+                sample_rate = "8000"
             
-            # Ensure model exists in supported models list
-            if transcription_model not in self.supported_models:
-                logger.warning(f"Model {transcription_model} not in supported list, falling back to nova-2")
-                transcription_model = "nova-2"
+            # Validate model is supported
+            supported_models = [
+                "nova-2", "nova-3", 
+                "nova-3-general", "nova-3-medical",
+                "nova-2-general", "nova-2-meeting", "nova-2-phonecall", 
+                "nova-2-finance", "nova-2-conversational-ai", "nova-2-voicemail",
+                "nova-2-video", "nova-2-medical", "nova-2-drive-thru", "nova-2-automotive"
+            ]
+            if model not in supported_models:
+                raise ValueError(f"Model {model} is not supported. Supported models: {supported_models}")
             
             # Use a minimal set of parameters that we know work from our test_deepgram.py
             # This ensures basic connectivity, we can add more parameters once basic connection works
             params = {
-                "model": transcription_model,
+                "model": model,
                 "encoding": encoding,
                 "sample_rate": sample_rate,
-                "channels": self.channels,
+                "channels": "1",
                 "language": transcription_language
             }
             
@@ -125,7 +120,7 @@ class DeepgramSTTService:
                 })
                 
                 # Add call-specific extras with optimized VAD for reduced background noise
-                if transcription_model.startswith("nova-2"):
+                if model.startswith("nova-2"):
                     # Low-latency call tuned with minimal VAD padding
                     params.update({
                         "filler_words": "true",
@@ -135,7 +130,7 @@ class DeepgramSTTService:
                         "vad_events": "true",
                         "vad_turn_padding": "100"
                     })
-                elif transcription_model.startswith("nova-3"):
+                elif model.startswith("nova-3"):
                     # Enable best features for nova-3 models with minimal VAD padding
                     params.update({
                         "diarize": "true",
@@ -171,7 +166,7 @@ class DeepgramSTTService:
             query_string = "&".join([f"{key}={value}" for key, value in params.items()])
             deepgram_url = f"{self.base_url}?{query_string}"
             
-            logger.info(f"Connecting to Deepgram with model: {transcription_model}")
+            logger.info(f"Connecting to Deepgram with model: {model}")
             logger.debug(f"Deepgram URL: {deepgram_url}")
             
             # Connect to Deepgram WebSocket with timeout
@@ -184,23 +179,23 @@ class DeepgramSTTService:
                             "Authorization": f"token {self.api_key}"
                         }
                     ),
-                    timeout=30.0
+                    timeout=60.0
                 )
                 logger.info("Successfully connected to Deepgram WebSocket")
-                if transcription_model.startswith("nova-3"):
+                if model.startswith("nova-3"):
                     logger.debug("Deepgram connected with nova-3 features enabled (diarize/endpointing/vad_events)")
                 else:
                     logger.debug("Deepgram connected with nova-2 call features enabled (diarize, filler_words, endpointing, utterance_end_ms, vad_events)")
             except Exception as e:
                 logger.error(f"Failed to connect to Deepgram (params={params}): {e}")
                 # If we're on a nova-3 family, retry once with only the absolute minimum params
-                if transcription_model.startswith("nova-3"):
+                if model.startswith("nova-3"):
                     try:
                         minimal_params = {
-                            "model": transcription_model,
-                            "encoding": self.encoding,
-                            "sample_rate": self.sample_rate,
-                            "channels": self.channels,
+                            "model": model,
+                            "encoding": encoding,
+                            "sample_rate": sample_rate,
+                            "channels": "1",
                             "language": transcription_language,
                             "inactivity_timeout": "30",
                         }
@@ -212,7 +207,7 @@ class DeepgramSTTService:
                                 minimal_url,
                                 extra_headers={"Authorization": f"token {self.api_key}"}
                             ),
-                            timeout=30.0
+                            timeout=60.0
                         )
                         logger.info("Successfully connected to Deepgram (minimal nova-3 params)")
                         # Overwrite deepgram_url for debugging context
@@ -230,7 +225,7 @@ class DeepgramSTTService:
                 "on_transcription_complete": on_transcription_complete,
                 "on_speech_started": on_speech_started,
                 "task": None,
-                "model": transcription_model,
+                "model": model,
                 "language": transcription_language,
                 "last_activity": asyncio.get_event_loop().time(),
                 "metadata": {},

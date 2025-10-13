@@ -22,16 +22,7 @@ class OpenAILLMService:
     def __init__(self):
         """Initialize the LLM service."""
         self.api_key = settings.openai_api_key
-        # Defaults from settings
-        self.model = getattr(settings, "openai_chat_model", "gpt-4o")
-        self.max_tokens = getattr(settings, "openai_max_tokens", 256)
-        self.temperature = getattr(settings, "openai_temperature", 0.8)
-        self.system_prompt = getattr(
-            settings,
-            "openai_system_prompt",
-            "You are a helpful voice assistant. Be concise and conversational.",
-        )
-        # Initialize client property to avoid 'no attribute' errors
+        # No hardcoded defaults - everything comes from database
         self.client = None
     async def initialize(self):
         """
@@ -49,6 +40,8 @@ class OpenAILLMService:
                                conversation_history: List[Dict[str, Any]] = None,
                                custom_system_prompt: str = None,
                                model: str = None,
+                               max_tokens: int = None,
+                               temperature: float = None,
                                should_stop: Optional[Callable[[], bool]] = None) -> str:
         """
         Generate an AI response to the given text.
@@ -58,11 +51,24 @@ class OpenAILLMService:
             on_content_delta: Callback for content chunks
             conversation_history: Optional conversation history
             custom_system_prompt: Optional custom system prompt
+            model: LLM model to use (required)
+            max_tokens: Maximum tokens for response (required)
+            temperature: Temperature for response generation (required)
             
         Returns:
             str: The complete generated response
         """
         try:
+            # Validate required parameters
+            if not model:
+                raise ValueError("Model is required")
+            if max_tokens is None:
+                raise ValueError("Max tokens is required")
+            if temperature is None:
+                raise ValueError("Temperature is required")
+            if not custom_system_prompt:
+                raise ValueError("System prompt is required")
+            
             # Initialize variables
             response_text = ""
             chunk_count = 0
@@ -71,8 +77,7 @@ class OpenAILLMService:
             messages = []
             
             # Add system message
-            system_message = custom_system_prompt if custom_system_prompt else self.system_prompt
-            messages.append({"role": "system", "content": system_message})
+            messages.append({"role": "system", "content": custom_system_prompt})
             
             # Add conversation history if provided
             if conversation_history:
@@ -89,33 +94,31 @@ class OpenAILLMService:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json"
                 }
-                # Use provided model or fall back to default
-                model_name = model or self.model
-                logger.info(f"Using LLM model: {model_name}")
+                logger.info(f"Using LLM model: {model}")
                 
                 data = {
-                    "model": model_name,
+                    "model": model,
                     "messages": messages,
                     "stream": True
                 }
                 
                 # Use the appropriate parameters based on the model
-                lower_model = model_name.lower()
+                lower_model = model.lower()
                 # Newer models (gpt-5 family) use max_completion_tokens and fixed temperature
                 if "gpt-5" in lower_model:
-                    data["max_completion_tokens"] = self.max_tokens
+                    data["max_completion_tokens"] = max_tokens
                     # According to OpenAI docs, temperature is fixed at 1 for gpt-5
                     logger.info("Using default temperature=1 for gpt-5 model")
                 else:
-                    data["max_tokens"] = self.max_tokens
-                    data["temperature"] = self.temperature
+                    data["max_tokens"] = max_tokens
+                    data["temperature"] = temperature
                 
                 # Make streaming request
                 async with session.post(url, headers=headers, json=data) as response:
                     if response.status != 200:
                         error_text = await response.text()
                         logger.error(f"OpenAI API error: {response.status} - {error_text}")
-                        return "I'm sorry, I couldn't process that right now."
+                        raise Exception(f"OpenAI API error: {response.status} - {error_text}")
                     
                     # Process streaming response
                     async for line in response.content:
@@ -146,7 +149,7 @@ class OpenAILLMService:
             
         except Exception as e:
             logger.error(f"Error generating response: {e}")
-            return "I'm sorry, there was an error processing your request."
+            raise e
     
     async def generate_response_with_tools(
         self,
@@ -156,6 +159,8 @@ class OpenAILLMService:
         conversation_history: List[Dict[str, Any]] = None,
         custom_system_prompt: str = None,
         model: str = None,
+        max_tokens: int = None,
+        temperature: float = None,
         should_stop: Optional[Callable[[], bool]] = None
     ) -> str:
         """
@@ -167,13 +172,25 @@ class OpenAILLMService:
             assistant_tools: List of tools available to the assistant
             conversation_history: Optional conversation history
             custom_system_prompt: Optional custom system prompt
-            model: Optional model override
+            model: LLM model to use (required)
+            max_tokens: Maximum tokens for response (required)
+            temperature: Temperature for response generation (required)
             should_stop: Optional callback to check if generation should stop
             
         Returns:
             str: The complete generated response
         """
         try:
+            # Validate required parameters
+            if not model:
+                raise ValueError("Model is required")
+            if max_tokens is None:
+                raise ValueError("Max tokens is required")
+            if temperature is None:
+                raise ValueError("Temperature is required")
+            if not custom_system_prompt:
+                raise ValueError("System prompt is required")
+            
             # Initialize tool execution service if needed
             await tool_execution_service.initialize()
             
@@ -205,30 +222,29 @@ class OpenAILLMService:
                     "Content-Type": "application/json"
                 }
                 
-                model_name = model or self.model
-                logger.info(f"Using LLM model with tools: {model_name}")
+                logger.info(f"Using LLM model with tools: {model}")
                 
                 data = {
-                    "model": model_name,
+                    "model": model,
                     "messages": messages,
                     "tools": tools,
                     "tool_choice": "auto"  # Let the model decide when to use tools
                 }
                 
                 # Use the appropriate parameters based on the model
-                lower_model = model_name.lower()
+                lower_model = model.lower()
                 if "gpt-5" in lower_model:
-                    data["max_completion_tokens"] = self.max_tokens
+                    data["max_completion_tokens"] = max_tokens
                 else:
-                    data["max_tokens"] = self.max_tokens
-                    data["temperature"] = self.temperature
+                    data["max_tokens"] = max_tokens
+                    data["temperature"] = temperature
                 
                 # Make request
                 async with session.post(url, headers=headers, json=data) as response:
                     if response.status != 200:
                         error_text = await response.text()
                         logger.error(f"OpenAI API error: {response.status} - {error_text}")
-                        return "I'm sorry, I couldn't process that right now."
+                        raise Exception(f"OpenAI API error: {response.status} - {error_text}")
                     
                     response_data = await response.json()
                     message = response_data["choices"][0]["message"]
@@ -247,23 +263,23 @@ class OpenAILLMService:
                         
                         # Generate final response
                         final_data = {
-                            "model": model_name,
+                            "model": model,
                             "messages": messages,
                             "stream": True
                         }
                         
                         if "gpt-5" in lower_model:
-                            final_data["max_completion_tokens"] = self.max_tokens
+                            final_data["max_completion_tokens"] = max_tokens
                         else:
-                            final_data["max_tokens"] = self.max_tokens
-                            final_data["temperature"] = self.temperature
+                            final_data["max_tokens"] = max_tokens
+                            final_data["temperature"] = temperature
                         
                         # Make streaming request for final response
                         async with session.post(url, headers=headers, json=final_data) as final_response:
                             if final_response.status != 200:
                                 error_text = await final_response.text()
                                 logger.error(f"OpenAI API error: {final_response.status} - {error_text}")
-                                return "I'm sorry, I couldn't process that right now."
+                                raise Exception(f"OpenAI API error: {final_response.status} - {error_text}")
                             
                             # Process streaming response
                             response_text = ""
@@ -296,7 +312,7 @@ class OpenAILLMService:
             
         except Exception as e:
             logger.error(f"Error generating response with tools: {e}")
-            return "I'm sorry, there was an error processing your request."
+            raise e
     
     def _build_system_prompt_with_tools(
         self, 
@@ -304,7 +320,7 @@ class OpenAILLMService:
         assistant_tools: List[AssistantTool]
     ) -> str:
         """Build system prompt with tool information."""
-        base_prompt = custom_system_prompt if custom_system_prompt else self.system_prompt
+        base_prompt = custom_system_prompt
         
         if not assistant_tools:
             return base_prompt

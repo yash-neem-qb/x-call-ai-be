@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from app.services.deepgram_stt_service import deepgram_stt_service
 from app.services.llm_service import openai_llm_service
-from app.services.rag_llm_service import rag_llm_service
+# from app.services.rag_llm_service import get_rag_llm_service  # Not using RAG for now
 from app.services.tts_service import elevenlabs_tts_service
 from app.services.async_call_service import async_call_service
 from app.db.crud import get_assistant
@@ -46,25 +46,34 @@ class PipelineMetrics:
 
 @dataclass
 class PipelineConfig:
-    """Pipeline configuration."""
-    stt_model: str = "nova-2-phonecall"
-    stt_language: str = "en-US"
-    stt_provider: str = "deepgram"
-    llm_model: str = "gpt-4o"
-    tts_voice_id: Optional[str] = None
-    tts_model: str = "eleven_turbo_v2_5"
-    tts_stability: float = 0.5
-    tts_similarity_boost: float = 0.75
-    tts_output_format: str = "ulaw_8000"  # Default to Twilio-compatible format
-    max_conversation_history: int = 10
-    interim_timeout_seconds: float = 2.0  # Timeout for interim transcripts
-    # Removed barge-in configuration
+    """Pipeline configuration - all values come from database."""
+    # STT configuration
+    stt_model: str
+    stt_language: str
+    stt_provider: str
+    
+    # LLM configuration
+    llm_model: str
+    llm_max_tokens: int
+    llm_temperature: float
+    llm_system_prompt: str
+    
+    # TTS configuration
+    tts_voice_id: str
+    tts_model: str
+    tts_stability: float
+    tts_similarity_boost: float
+    tts_output_format: str
+    
+    # Pipeline settings
+    max_conversation_history: int
+    interim_timeout_seconds: float
     
     # RAG (Knowledge Base) settings
-    enable_rag: bool = False  # Disabled for testing to reduce latency
-    rag_max_results: int = 3
-    rag_score_threshold: float = 0.7
-    rag_max_context_length: int = 2000
+    enable_rag: bool
+    rag_max_results: int
+    rag_score_threshold: float
+    rag_max_context_length: int
 
 
 class UnifiedCallPipeline:
@@ -95,7 +104,7 @@ class UnifiedCallPipeline:
         
         # Pipeline state
         self.state = PipelineState.IDLE
-        self.config = PipelineConfig()
+        self.config = None  # Will be set from database
         self.metrics = PipelineMetrics()
         
         # Service sessions
@@ -151,8 +160,7 @@ class UnifiedCallPipeline:
             # Initialize services
             await self._initialize_services()
             
-            # Initialize RAG-enhanced LLM service
-            await rag_llm_service.initialize()
+            # Using regular LLM service (no RAG initialization needed)
             
             # Start in IDLE state, but we'll transition to continuous listening mode
             self.state = PipelineState.IDLE
@@ -167,26 +175,78 @@ class UnifiedCallPipeline:
     async def _configure_pipeline(self):
         """Configure pipeline based on assistant settings."""
         if not self.assistant_config:
-            return
+            raise ValueError("Assistant configuration is required")
         
         # Configure STT
         transcriber_config = self.assistant_config.get("transcriber", {})
-        self.config.stt_model = transcriber_config.get("model", "nova-2-phonecall")
-        self.config.stt_language = transcriber_config.get("language", "en-US")
-        self.config.stt_provider = transcriber_config.get("provider", "deepgram").lower()
+        if not transcriber_config.get("model"):
+            raise ValueError("STT model is required")
+        if not transcriber_config.get("language"):
+            raise ValueError("STT language is required")
+        if not transcriber_config.get("provider"):
+            raise ValueError("STT provider is required")
         
         # Configure LLM
         model_config = self.assistant_config.get("model", {})
-        self.config.llm_model = model_config.get("model", "gpt-4o")
+        if not model_config.get("model"):
+            raise ValueError("LLM model is required")
+        if not model_config.get("maxTokens"):
+            raise ValueError("LLM max tokens is required")
+        if model_config.get("temperature") is None:
+            raise ValueError("LLM temperature is required")
+        if not model_config.get("systemPrompt"):
+            raise ValueError("LLM system prompt is required")
         
         # Configure TTS
         voice_config = self.assistant_config.get("voice", {})
-        self.config.tts_voice_id = voice_config.get("voiceId")
-        self.config.tts_model = voice_config.get("model", "eleven_turbo_v2_5")
-        self.config.tts_stability = voice_config.get("stability", 0.5)
-        self.config.tts_similarity_boost = voice_config.get("similarityBoost", 0.75)
+        if not voice_config.get("voiceId"):
+            raise ValueError("TTS voice ID is required")
+        if not voice_config.get("model"):
+            raise ValueError("TTS model is required")
+        if voice_config.get("stability") is None:
+            raise ValueError("TTS stability is required")
+        if voice_config.get("similarityBoost") is None:
+            raise ValueError("TTS similarity boost is required")
+        # Output format comes from settings, not database
+        output_format = settings.elevenlabs_output_format
+        logger.info(f"🎤 TTS Config from DB - Voice: {voice_config['voiceId']}, Model: {voice_config['model']}, Stability: {voice_config['stability']}, Similarity: {voice_config['similarityBoost']}")
+        logger.info(f"🎤 TTS Output format from settings: {output_format}")
         
-        # Pipeline configured with STT, LLM, and TTS services
+        # Configure RAG
+        rag_config = self.assistant_config.get("rag", {})
+        if rag_config.get("enabled") is None:
+            raise ValueError("RAG enabled setting is required")
+        
+        # Create configuration from database values
+        self.config = PipelineConfig(
+            # STT configuration
+            stt_model=transcriber_config["model"],
+            stt_language=transcriber_config["language"],
+            stt_provider=transcriber_config["provider"].lower(),
+            
+            # LLM configuration
+            llm_model=model_config["model"],
+            llm_max_tokens=model_config["maxTokens"],
+            llm_temperature=model_config["temperature"],
+            llm_system_prompt=model_config["systemPrompt"],
+            
+            # TTS configuration
+            tts_voice_id=voice_config["voiceId"],
+            tts_model=voice_config["model"],
+            tts_stability=voice_config["stability"],
+            tts_similarity_boost=voice_config["similarityBoost"],
+            tts_output_format=output_format,
+            
+            # Pipeline settings
+            max_conversation_history=10,  # Default value
+            interim_timeout_seconds=2.0,  # Default value
+            
+            # RAG configuration
+            enable_rag=rag_config["enabled"],
+            rag_max_results=rag_config.get("maxResults", 3),
+            rag_score_threshold=rag_config.get("scoreThreshold", 0.7),
+            rag_max_context_length=rag_config.get("maxContextLength", 2000)
+        )
     
     async def _initialize_services(self):
         """Initialize STT and TTS services."""
@@ -205,6 +265,7 @@ class UnifiedCallPipeline:
                 raise Exception("Failed to initialize Deepgram STT service")
         
         # Initialize TTS service
+        logger.info(f"🎤 Creating TTS session with config - Voice: {self.config.tts_voice_id}, Model: {self.config.tts_model}, Stability: {self.config.tts_stability}, Similarity: {self.config.tts_similarity_boost}, Format: {self.config.tts_output_format}")
         await elevenlabs_tts_service.create_tts_session(
             self.tts_session_id,
             self._handle_tts_audio,
@@ -237,6 +298,11 @@ class UnifiedCallPipeline:
         try:
             # ALWAYS process audio for continuous listening and barge-in
             # The STT service will handle speech detection and only trigger callbacks when speech is detected
+            
+            # Check if pipeline is properly configured
+            if not self.config:
+                logger.error("Pipeline not properly configured - config is None")
+                return False
             
             # Send audio to STT service regardless of current state
             if self.config.stt_provider == "deepgram":
@@ -325,15 +391,16 @@ class UnifiedCallPipeline:
             "content": text
         })
         
-        # Store user transcript message asynchronously with actual confidence score
+        # Store user transcript message asynchronously with actual confidence score (fire-and-forget)
         confidence_score = getattr(self, 'current_confidence', 1.0)
         logger.info(f"🔍 Queuing user transcript for call {self.call_sid}: '{text}' (confidence: {confidence_score:.2f})")
-        await async_call_service.add_transcript_message(
+        # Fire-and-forget: Don't await to avoid blocking the pipeline
+        asyncio.create_task(async_call_service.add_transcript_message(
             twilio_call_sid=self.call_sid,
             speaker="user",
             message=text,
             confidence=confidence_score
-        )
+        ))
         
         # Send final user message to frontend if text callback is available
         if self.text_callback and self.is_web_stream:
@@ -392,7 +459,7 @@ class UnifiedCallPipeline:
                 # Define content delta handler for streaming with batching
                 tts_buffer = []
                 buffer_size = 0
-                max_buffer_size = 50  # Batch up to 50 characters
+                max_buffer_size = 100  # Batch up to 100 characters for better performance
                 
                 async def handle_content_delta(delta: str):
                     nonlocal tts_buffer, buffer_size
@@ -418,26 +485,16 @@ class UnifiedCallPipeline:
                             tts_buffer = []
                             buffer_size = 0
                 
-                # Configure RAG service with assistant settings
-                from app.services.rag_llm_service import RAGConfig
-                assistant_rag_config = self.assistant_config.get("rag", {}) if self.assistant_config else {}
-                rag_config = RAGConfig(
-                    enable_rag=False,  # Force disable RAG for testing to reduce latency
-                    max_knowledge_results=assistant_rag_config.get("maxResults", self.config.rag_max_results),
-                    knowledge_score_threshold=assistant_rag_config.get("scoreThreshold", self.config.rag_score_threshold),
-                    max_knowledge_context_length=assistant_rag_config.get("maxContextLength", self.config.rag_max_context_length)
-                )
-                rag_llm_service.update_config(rag_config)
-                
-                # Generate response with RAG-enhanced LLM service
-                response = await rag_llm_service.generate_response_with_rag(
+                # Generate response with regular LLM service (no RAG)
+                logger.info(f"Using LLM model: {self.config.llm_model}")
+                response = await openai_llm_service.generate_response(
                     text=transcript,
                     on_content_delta=handle_content_delta,
                     conversation_history=recent_history,
                     custom_system_prompt=system_prompt,
                     model=self.config.llm_model,
-                    organization_id=str(self.assistant_config.get("organizationId")) if self.assistant_config else None,
-                    assistant_id=str(self.assistant_id) if self.assistant_id else None
+                    max_tokens=self.config.llm_max_tokens,
+                    temperature=self.config.llm_temperature
                 )
                 
                 # Mark LLM completion time
@@ -466,14 +523,15 @@ class UnifiedCallPipeline:
                     "content": response
                 })
                 
-                # Store assistant transcript message asynchronously (system confidence = 1.0)
+                # Store assistant transcript message asynchronously (system confidence = 1.0) (fire-and-forget)
                 logger.info(f"🔍 Queuing assistant transcript for call {self.call_sid}: '{response[:50]}...'")
-                await async_call_service.add_transcript_message(
+                # Fire-and-forget: Don't await to avoid blocking the pipeline
+                asyncio.create_task(async_call_service.add_transcript_message(
                     twilio_call_sid=self.call_sid,
                     speaker="assistant",
                     message=response,
                     confidence=1.0  # System messages always have confidence = 1.0
-                )
+                ))
                 
                 # Send final assistant message to frontend if text callback is available
                 if self.text_callback and self.is_web_stream:
@@ -612,7 +670,7 @@ class UnifiedCallPipeline:
                     pass
             
             # Close STT session (clears audio buffers and connections)
-            if self.config.stt_provider == "deepgram":
+            if self.config and self.config.stt_provider == "deepgram":
                 await deepgram_stt_service.close_session(self.stt_session_id)
             
             # Close TTS session (clears audio buffers and connections)
@@ -725,7 +783,10 @@ class UnifiedPipelineManager:
                     setattr(pipeline.config, key, value)
                     logger.info(f"Applied config override: {key} = {value}")
         
-        await pipeline.initialize()
+        success = await pipeline.initialize()
+        if not success:
+            logger.error(f"Failed to initialize pipeline for call: {call_sid}")
+            return None
         
         self.active_pipelines[call_sid] = pipeline
         logger.info(f"Created unified pipeline for call: {call_sid}")

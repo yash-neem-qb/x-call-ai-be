@@ -22,25 +22,17 @@ class RAGConfig:
     """Configuration for RAG (Retrieval-Augmented Generation) behavior."""
     
     # Knowledge base search settings
-    enable_rag: bool = False  # Disabled for testing to reduce latency
-    max_knowledge_results: int = 3
-    knowledge_score_threshold: float = 0.7
-    max_knowledge_context_length: int = 2000
+    enable_rag: bool
+    max_knowledge_results: int
+    knowledge_score_threshold: float
+    max_knowledge_context_length: int
     
     # System prompt enhancement
-    include_knowledge_in_system_prompt: bool = True
-    knowledge_context_template: str = """
-Based on the following knowledge base information, provide accurate and helpful responses:
-
-KNOWLEDGE BASE CONTEXT:
-{knowledge_context}
-
-Use this information to answer questions accurately. If the knowledge base doesn't contain relevant information, say so clearly and provide general assistance based on your training.
-"""
+    include_knowledge_in_system_prompt: bool
+    knowledge_context_template: str
     
-    # Fallback behavior
-    fallback_to_general_llm: bool = True
-    log_knowledge_usage: bool = True
+    # No fallback behavior - everything must be configured
+    log_knowledge_usage: bool
 
 
 class RAGEnhancedLLMService:
@@ -51,16 +43,19 @@ class RAGEnhancedLLMService:
     accurate, context-aware responses during voice calls.
     """
     
-    def __init__(self, rag_config: Optional[RAGConfig] = None):
+    def __init__(self, rag_config: RAGConfig):
         """
         Initialize the RAG-enhanced LLM service.
         
         Args:
-            rag_config: Configuration for RAG behavior
+            rag_config: Configuration for RAG behavior (required)
         """
+        if not rag_config:
+            raise ValueError("RAG configuration is required")
+        
         self.llm_service = openai_llm_service
         self.knowledge_service = knowledge_service
-        self.config = rag_config or RAGConfig()
+        self.config = rag_config
         
         logger.info("RAG-enhanced LLM service initialized")
     
@@ -87,6 +82,8 @@ class RAGEnhancedLLMService:
         conversation_history: List[Dict[str, Any]] = None,
         custom_system_prompt: str = None,
         model: str = None,
+        max_tokens: int = None,
+        temperature: float = None,
         organization_id: str = None,
         assistant_id: str = None,
         should_stop: Optional[Callable[[], bool]] = None
@@ -99,22 +96,36 @@ class RAGEnhancedLLMService:
             on_content_delta: Callback for content chunks
             conversation_history: Optional conversation history
             custom_system_prompt: Optional custom system prompt
-            model: Optional model override
-            organization_id: Organization ID for knowledge base access
-            assistant_id: Assistant ID for knowledge base filtering
+            model: LLM model to use (required)
+            max_tokens: Maximum tokens for response (required)
+            temperature: Temperature for response generation (required)
+            organization_id: Organization ID for knowledge base access (required)
+            assistant_id: Assistant ID for knowledge base filtering (required)
             should_stop: Optional callback to check if generation should stop
             
         Returns:
             str: The complete generated response
         """
         try:
+            # Validate required parameters
+            if not model:
+                raise ValueError("Model is required")
+            if max_tokens is None:
+                raise ValueError("Max tokens is required")
+            if temperature is None:
+                raise ValueError("Temperature is required")
+            if not organization_id:
+                raise ValueError("Organization ID is required")
+            if not assistant_id:
+                raise ValueError("Assistant ID is required")
+            
             start_time = time.time()
             
             # Step 1: Search knowledge base if RAG is enabled
             knowledge_context = ""
             knowledge_results = []
             
-            if self.config.enable_rag and organization_id:
+            if self.config.enable_rag:
                 knowledge_context, knowledge_results = await self._search_knowledge_base(
                     text, organization_id, assistant_id
                 )
@@ -124,13 +135,19 @@ class RAGEnhancedLLMService:
                 custom_system_prompt, knowledge_context
             )
             
-            # Step 3: Get assistant tools if assistant_id is provided
+            # Step 3: Get assistant tools if assistant_id is provided (fire-and-forget)
             assistant_tools = []
             if assistant_id and organization_id:
                 try:
-                    db = next(get_db())
-                    assistant_tools = get_assistant_tools(db, assistant_id, organization_id, enabled_only=True)
-                    db.close()
+                    # Run database operation in thread pool to avoid blocking
+                    import asyncio
+                    loop = asyncio.get_event_loop()
+                    assistant_tools = await loop.run_in_executor(
+                        None, 
+                        self._get_assistant_tools_sync, 
+                        assistant_id, 
+                        organization_id
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to load assistant tools: {e}")
             
@@ -143,6 +160,8 @@ class RAGEnhancedLLMService:
                     conversation_history=conversation_history,
                     custom_system_prompt=enhanced_system_prompt,
                     model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
                     should_stop=should_stop
                 )
             else:
@@ -152,6 +171,8 @@ class RAGEnhancedLLMService:
                     conversation_history=conversation_history,
                     custom_system_prompt=enhanced_system_prompt,
                     model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
                     should_stop=should_stop
                 )
             
@@ -163,42 +184,7 @@ class RAGEnhancedLLMService:
             
         except Exception as e:
             logger.error(f"Error in RAG-enhanced response generation: {e}")
-            
-            # Fallback to general LLM if configured
-            if self.config.fallback_to_general_llm:
-                logger.info("Falling back to general LLM service")
-                
-                # Try to get tools for fallback as well
-                assistant_tools = []
-                if assistant_id and organization_id:
-                    try:
-                        db = next(get_db())
-                        assistant_tools = get_assistant_tools(db, assistant_id, organization_id, enabled_only=True)
-                        db.close()
-                    except Exception as e:
-                        logger.warning(f"Failed to load assistant tools for fallback: {e}")
-                
-                if assistant_tools:
-                    return await self.llm_service.generate_response_with_tools(
-                        text=text,
-                        on_content_delta=on_content_delta,
-                        assistant_tools=assistant_tools,
-                        conversation_history=conversation_history,
-                        custom_system_prompt=custom_system_prompt,
-                        model=model,
-                        should_stop=should_stop
-                    )
-                else:
-                    return await self.llm_service.generate_response(
-                        text=text,
-                        on_content_delta=on_content_delta,
-                        conversation_history=conversation_history,
-                        custom_system_prompt=custom_system_prompt,
-                        model=model,
-                        should_stop=should_stop
-                    )
-            else:
-                return "I'm sorry, I couldn't process that right now."
+            raise e
     
     async def _search_knowledge_base(
         self, 
@@ -360,7 +346,45 @@ class RAGEnhancedLLMService:
             Current RAG configuration
         """
         return self.config
+    
+    def _get_assistant_tools_sync(self, assistant_id: str, organization_id: str):
+        """
+        Synchronous helper method to get assistant tools (runs in thread pool).
+        
+        Args:
+            assistant_id: Assistant ID
+            organization_id: Organization ID
+            
+        Returns:
+            List of assistant tools
+        """
+        try:
+            db = next(get_db())
+            tools = get_assistant_tools(db, assistant_id, organization_id, enabled_only=True)
+            db.close()
+            return tools
+        except Exception as e:
+            logger.error(f"Error in sync assistant tools lookup: {e}")
+            return []
 
 
-# Global RAG-enhanced LLM service instance
-rag_llm_service = RAGEnhancedLLMService()
+# Global RAG-enhanced LLM service instance - will be initialized with proper config
+rag_llm_service = None
+
+def get_rag_llm_service(rag_config: RAGConfig = None) -> RAGEnhancedLLMService:
+    """Get or create RAG LLM service instance with configuration."""
+    global rag_llm_service
+    if rag_llm_service is None:
+        if rag_config is None:
+            # Create a minimal default config for initialization
+            rag_config = RAGConfig(
+                enable_rag=False,
+                max_knowledge_results=3,
+                knowledge_score_threshold=0.7,
+                max_knowledge_context_length=2000,
+                include_knowledge_in_system_prompt=True,
+                knowledge_context_template="",
+                log_knowledge_usage=True
+            )
+        rag_llm_service = RAGEnhancedLLMService(rag_config)
+    return rag_llm_service
