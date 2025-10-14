@@ -17,6 +17,7 @@ from app.models.tool_schemas import (
     ToolExecutionRequest, ToolExecutionResponse
 )
 from app.db.models import User
+from app.services.tool_execution_service import tool_execution_service
 
 logger = logging.getLogger(__name__)
 
@@ -332,10 +333,20 @@ async def execute_tool(
             detail="Tool is not active"
         )
     
-    # TODO: Implement tool execution service
-    # For now, return a placeholder response
-    return ToolExecutionResponse(
-        success=True,
-        data={"message": "Tool execution not yet implemented"},
-        execution_time_ms=0.0
-    )
+    # Execute the tool using the tool execution service
+    try:
+        result = await tool_execution_service.execute_tool(
+            tool=tool,
+            parameters=execution_request.parameters,
+            body=execution_request.body
+        )
+        
+        logger.info(f"Tool '{tool.name}' executed successfully for user {current_user.id}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Tool execution failed for tool '{tool.name}': {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Tool execution failed: {str(e)}"
+        )

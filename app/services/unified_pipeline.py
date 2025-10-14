@@ -16,7 +16,7 @@ from app.services.llm_service import openai_llm_service
 # from app.services.rag_llm_service import get_rag_llm_service  # Not using RAG for now
 from app.services.tts_service import elevenlabs_tts_service
 from app.services.async_call_service import async_call_service
-from app.db.crud import get_assistant
+from app.db.crud import get_assistant, tool_crud
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,7 @@ class UnifiedCallPipeline:
         
         # Assistant configuration
         self.assistant_config = None
+        self.assistant_tools = []  # Store assistant tools for tool calling
         
         logger.info(f"Unified pipeline initialized for call: {call_sid}")
     
@@ -152,6 +153,17 @@ class UnifiedCallPipeline:
                 return False
             
             self.assistant_config = assistant.to_dict()
+            
+            # Load assistant tools for tool calling
+            try:
+                self.assistant_tools = tool_crud.get_assistant_tools(
+                    db_session, self.assistant_id, assistant.organization_id, enabled_only=True
+                )
+                logger.info(f"Loaded {len(self.assistant_tools)} tools for assistant {self.assistant_id}")
+            except Exception as e:
+                logger.warning(f"Failed to load assistant tools: {e}")
+                self.assistant_tools = []
+            
             db_session.close()
             
             # Configure pipeline based on assistant settings
@@ -485,17 +497,32 @@ class UnifiedCallPipeline:
                             tts_buffer = []
                             buffer_size = 0
                 
-                # Generate response with regular LLM service (no RAG)
+                # Generate response with LLM service (with tool calling if tools are available)
                 logger.info(f"Using LLM model: {self.config.llm_model}")
-                response = await openai_llm_service.generate_response(
-                    text=transcript,
-                    on_content_delta=handle_content_delta,
-                    conversation_history=recent_history,
-                    custom_system_prompt=system_prompt,
-                    model=self.config.llm_model,
-                    max_tokens=self.config.llm_max_tokens,
-                    temperature=self.config.llm_temperature
-                )
+                
+                if self.assistant_tools:
+                    logger.info(f"Using tool-enabled LLM with {len(self.assistant_tools)} tools")
+                    response = await openai_llm_service.generate_response_with_tools(
+                        text=transcript,
+                        on_content_delta=handle_content_delta,
+                        assistant_tools=self.assistant_tools,
+                        conversation_history=recent_history,
+                        custom_system_prompt=system_prompt,
+                        model=self.config.llm_model,
+                        max_tokens=self.config.llm_max_tokens,
+                        temperature=self.config.llm_temperature
+                    )
+                else:
+                    logger.info("Using regular LLM (no tools available)")
+                    response = await openai_llm_service.generate_response(
+                        text=transcript,
+                        on_content_delta=handle_content_delta,
+                        conversation_history=recent_history,
+                        custom_system_prompt=system_prompt,
+                        model=self.config.llm_model,
+                        max_tokens=self.config.llm_max_tokens,
+                        temperature=self.config.llm_temperature
+                    )
                 
                 # Mark LLM completion time
                 llm_end_time = time.monotonic()
