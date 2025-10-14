@@ -48,7 +48,7 @@ class VectorService:
             raise
     
     def _ensure_collection_exists(self):
-        """Ensure the knowledge base collection exists."""
+        """Ensure the knowledge base collection exists with proper indexes."""
         try:
             collections = self.client.get_collections()
             collection_names = [col.name for col in collections.collections]
@@ -58,13 +58,23 @@ class VectorService:
                 logger.info(f"Created collection: {self.collection_name}")
             else:
                 logger.info(f"Collection already exists: {self.collection_name}")
+                # Ensure indexes exist even for existing collections
+                self._ensure_indexes_exist()
                 
         except Exception as e:
             logger.error(f"Error ensuring collection exists: {e}")
             raise
     
+    def _ensure_indexes_exist(self):
+        """Ensure indexes exist for existing collections."""
+        try:
+            # Try to create indexes - they may already exist
+            self._create_indexes()
+        except Exception as e:
+            logger.warning(f"Could not create indexes (may already exist): {e}")
+    
     def _create_collection(self):
-        """Create the knowledge base collection."""
+        """Create the knowledge base collection with proper indexing."""
         try:
             self.client.create_collection(
                 collection_name=self.collection_name,
@@ -73,9 +83,36 @@ class VectorService:
                     distance=Distance.COSINE
                 )
             )
+            
+            # Create indexes for filtering
+            self._create_indexes()
+            
         except Exception as e:
             logger.error(f"Error creating collection: {e}")
             raise
+    
+    def _create_indexes(self):
+        """Create indexes for efficient filtering."""
+        try:
+            # Create index for organization_id (required for filtering)
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="organization_id",
+                field_schema=models.PayloadSchemaType.KEYWORD
+            )
+            logger.info(f"Created index for organization_id in collection {self.collection_name}")
+            
+            # Create index for assistant_id (optional filtering)
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="assistant_id",
+                field_schema=models.PayloadSchemaType.KEYWORD
+            )
+            logger.info(f"Created index for assistant_id in collection {self.collection_name}")
+            
+        except Exception as e:
+            logger.warning(f"Error creating indexes (collection may already exist): {e}")
+            # Don't raise here as the collection might already exist with indexes
     
     async def add_documents(self, documents: List[Dict[str, Any]], 
                           embeddings: List[List[float]]) -> List[str]:

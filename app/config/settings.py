@@ -52,6 +52,15 @@ class Settings(BaseSettings):
     vector_default_search_limit: int = 10
     vector_similarity_threshold: float = 0.7
     
+    # RAG Configuration (Always Enabled)
+    rag_enabled: bool = True
+    rag_max_results: int = 3
+    rag_score_threshold: float = 0.7
+    rag_max_context_length: int = 2000
+    rag_include_in_system_prompt: bool = True
+    rag_knowledge_context_template: str = "Based on the following knowledge base information: {knowledge_context}"
+    rag_log_knowledge_usage: bool = True
+    
     # JWT Configuration
     jwt_secret_key: str = "your-secret-key-here"  # In production, use a secure secret key
     jwt_algorithm: str = "HS256"

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from app.services.deepgram_stt_service import deepgram_stt_service
 from app.services.llm_service import openai_llm_service
-# from app.services.rag_llm_service import get_rag_llm_service  # Not using RAG for now
+from app.services.rag_llm_service import get_rag_llm_service, RAGConfig
 from app.services.tts_service import elevenlabs_tts_service
 from app.services.async_call_service import async_call_service
 from app.db.crud import get_assistant, tool_crud
@@ -69,11 +69,8 @@ class PipelineConfig:
     max_conversation_history: int
     interim_timeout_seconds: float
     
-    # RAG (Knowledge Base) settings
-    enable_rag: bool
-    rag_max_results: int
-    rag_score_threshold: float
-    rag_max_context_length: int
+    # RAG (Knowledge Base) settings - Always enabled via settings.py
+    # Note: RAG is always enabled, configuration comes from settings.py
 
 
 class UnifiedCallPipeline:
@@ -129,6 +126,7 @@ class UnifiedCallPipeline:
         # Assistant configuration
         self.assistant_config = None
         self.assistant_tools = []  # Store assistant tools for tool calling
+        self.rag_service = None  # Store RAG service instance
         
         logger.info(f"Unified pipeline initialized for call: {call_sid}")
     
@@ -172,7 +170,8 @@ class UnifiedCallPipeline:
             # Initialize services
             await self._initialize_services()
             
-            # Using regular LLM service (no RAG initialization needed)
+            # Initialize RAG service (always enabled)
+            await self._initialize_rag_service()
             
             # Start in IDLE state, but we'll transition to continuous listening mode
             self.state = PipelineState.IDLE
@@ -224,10 +223,7 @@ class UnifiedCallPipeline:
         logger.info(f"🎤 TTS Config from DB - Voice: {voice_config['voiceId']}, Model: {voice_config['model']}, Stability: {voice_config['stability']}, Similarity: {voice_config['similarityBoost']}")
         logger.info(f"🎤 TTS Output format from settings: {output_format}")
         
-        # Configure RAG
-        rag_config = self.assistant_config.get("rag", {})
-        if rag_config.get("enabled") is None:
-            raise ValueError("RAG enabled setting is required")
+        # RAG is now always enabled via settings.py - no need to check assistant config
         
         # Create configuration from database values
         self.config = PipelineConfig(
@@ -253,11 +249,8 @@ class UnifiedCallPipeline:
             max_conversation_history=10,  # Default value
             interim_timeout_seconds=2.0,  # Default value
             
-            # RAG configuration
-            enable_rag=rag_config["enabled"],
-            rag_max_results=rag_config.get("maxResults", 3),
-            rag_score_threshold=rag_config.get("scoreThreshold", 0.7),
-            rag_max_context_length=rag_config.get("maxContextLength", 2000)
+            # RAG configuration - Always enabled via settings.py
+            # RAG settings are now managed in settings.py, not in assistant config
         )
     
     async def _initialize_services(self):
@@ -290,6 +283,35 @@ class UnifiedCallPipeline:
         )
         
         logger.info("Services initialized successfully")
+    
+    async def _initialize_rag_service(self):
+        """Initialize RAG service (always enabled with settings.py configuration)."""
+        try:
+            # Create RAG configuration from settings.py
+            rag_config = RAGConfig(
+                enable_rag=settings.rag_enabled,
+                max_knowledge_results=settings.rag_max_results,
+                knowledge_score_threshold=settings.rag_score_threshold,
+                max_knowledge_context_length=settings.rag_max_context_length,
+                include_knowledge_in_system_prompt=settings.rag_include_in_system_prompt,
+                knowledge_context_template=settings.rag_knowledge_context_template,
+                log_knowledge_usage=settings.rag_log_knowledge_usage
+            )
+            
+            # Get RAG service instance
+            self.rag_service = get_rag_llm_service(rag_config)
+            
+            # Initialize the service
+            success = await self.rag_service.initialize()
+            if success:
+                logger.info(f"RAG service initialized successfully for call {self.call_sid}")
+            else:
+                logger.warning(f"RAG service initialization failed for call {self.call_sid}")
+                self.rag_service = None
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize RAG service: {e}")
+            self.rag_service = None
     
     async def process_audio(self, audio_data: str) -> bool:
         """
@@ -497,10 +519,25 @@ class UnifiedCallPipeline:
                             tts_buffer = []
                             buffer_size = 0
                 
-                # Generate response with LLM service (with tool calling if tools are available)
+                # Generate response with LLM service (RAG + tool calling when available)
                 logger.info(f"Using LLM model: {self.config.llm_model}")
                 
-                if self.assistant_tools:
+                if self.rag_service:
+                    # Use RAG-enhanced LLM (includes tool calling) - Always enabled
+                    logger.info(f"Using RAG-enhanced LLM with {len(self.assistant_tools)} tools")
+                    response = await self.rag_service.generate_response_with_rag(
+                        text=transcript,
+                        on_content_delta=handle_content_delta,
+                        conversation_history=recent_history,
+                        custom_system_prompt=system_prompt,
+                        model=self.config.llm_model,
+                        max_tokens=self.config.llm_max_tokens,
+                        temperature=self.config.llm_temperature,
+                        organization_id=str(self.assistant_config.get("organizationId", "")),
+                        assistant_id=str(self.assistant_id)
+                    )
+                elif self.assistant_tools:
+                    # Use tool-enabled LLM (no RAG)
                     logger.info(f"Using tool-enabled LLM with {len(self.assistant_tools)} tools")
                     response = await openai_llm_service.generate_response_with_tools(
                         text=transcript,
@@ -513,7 +550,8 @@ class UnifiedCallPipeline:
                         temperature=self.config.llm_temperature
                     )
                 else:
-                    logger.info("Using regular LLM (no tools available)")
+                    # Use regular LLM (no RAG, no tools)
+                    logger.info("Using regular LLM (no RAG, no tools available)")
                     response = await openai_llm_service.generate_response(
                         text=transcript,
                         on_content_delta=handle_content_delta,
