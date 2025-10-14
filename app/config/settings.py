@@ -61,6 +61,36 @@ class Settings(BaseSettings):
     rag_knowledge_context_template: str = "Based on the following knowledge base information: {knowledge_context}"
     rag_log_knowledge_usage: bool = True
     
+    # Intelligent Routing Configuration
+    rag_casual_words: list = [
+        # Greetings
+        "hi", "hello", "hey", "hiya", "howdy", "greetings", "good morning", "good afternoon", "good evening",
+        "morning", "afternoon", "evening", "sup", "what's up", "yo", "hi there", "hello there",
+        
+        # Casual responses
+        "ok", "okay", "sure", "yes", "no", "yeah", "yep", "nope", "maybe", "perhaps",
+        "thanks", "thank you", "thanks a lot", "appreciate it", "no problem", "you're welcome",
+        
+        # Simple acknowledgments
+        "got it", "understood", "i see", "i understand", "alright", "fine", "good", "great",
+        "awesome", "cool", "nice", "perfect", "excellent", "wonderful", "amazing",
+        
+        # Basic questions
+        "how are you", "how's it going", "what's happening", "what's new", "how do you do",
+        
+        # Short responses
+        "mhm", "uh huh", "right", "exactly", "indeed", "absolutely", "definitely",
+        
+        # Common fillers
+        "um", "uh", "er", "well", "so", "like", "you know", "i mean", "actually",
+        
+        # Time-related casual
+        "what time", "time", "clock", "hour", "minute", "when", "now", "today", "tomorrow", "yesterday"
+    ]
+    
+    rag_min_query_length: int = 10  # Minimum characters for knowledge base search
+    rag_require_meaningful_words: bool = True  # Skip if only casual words detected
+    
     # JWT Configuration
     jwt_secret_key: str = "your-secret-key-here"  # In production, use a secure secret key
     jwt_algorithm: str = "HS256"

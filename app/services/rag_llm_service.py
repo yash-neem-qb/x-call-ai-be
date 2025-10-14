@@ -193,7 +193,7 @@ class RAGEnhancedLLMService:
         assistant_id: Optional[str] = None
     ) -> tuple[str, List[Dict[str, Any]]]:
         """
-        Search the knowledge base for relevant information.
+        Search the knowledge base for relevant information with intelligent routing.
         
         Args:
             query: Search query
@@ -204,6 +204,11 @@ class RAGEnhancedLLMService:
             Tuple of (knowledge_context, search_results)
         """
         try:
+            # Check if query should skip knowledge base search
+            if not self._should_search_knowledge_base(query):
+                logger.info(f"Skipping knowledge base search for casual query: '{query[:50]}...'")
+                return "", []
+            
             logger.info(f"Searching knowledge base for query: '{query[:50]}...'")
             
             # Search knowledge base
@@ -228,6 +233,57 @@ class RAGEnhancedLLMService:
         except Exception as e:
             logger.error(f"Error searching knowledge base: {e}")
             return "", []
+    
+    def _should_search_knowledge_base(self, query: str) -> bool:
+        """
+        Determine if the query should trigger a knowledge base search.
+        
+        Args:
+            query: User query to analyze
+            
+        Returns:
+            True if knowledge base search should be performed
+        """
+        try:
+            # Check minimum query length
+            if len(query.strip()) < settings.rag_min_query_length:
+                logger.debug(f"Query too short for knowledge base search: {len(query.strip())} chars")
+                return False
+            
+            # Normalize query for comparison
+            normalized_query = query.lower().strip()
+            
+            # Check if query contains only casual words
+            if settings.rag_require_meaningful_words:
+                words = normalized_query.split()
+                casual_word_count = 0
+                
+                for word in words:
+                    # Remove punctuation for comparison
+                    clean_word = ''.join(c for c in word if c.isalnum())
+                    if clean_word in settings.rag_casual_words:
+                        casual_word_count += 1
+                
+                # If all words are casual, skip knowledge base search
+                if casual_word_count == len(words) and len(words) > 0:
+                    logger.debug(f"Query contains only casual words: {words}")
+                    return False
+            
+            # Check for exact casual phrase matches
+            for casual_phrase in settings.rag_casual_words:
+                if casual_phrase in normalized_query and len(casual_phrase) > 2:
+                    # If the query is mostly the casual phrase, skip search
+                    if len(normalized_query) <= len(casual_phrase) + 5:  # Allow some extra words
+                        logger.debug(f"Query matches casual phrase: '{casual_phrase}'")
+                        return False
+            
+            # Query passed all filters - should search knowledge base
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error in intelligent routing: {e}")
+            # Default to searching knowledge base if there's an error
+            return True
     
     def _build_knowledge_context(self, results: List[Dict[str, Any]]) -> str:
         """
