@@ -766,6 +766,10 @@ class UnifiedCallPipeline:
                 # Send call end notification to frontend
                 await self.text_callback("call_ended", end_reason, True)
             
+            # Wait a moment for TTS to complete before shutting down
+            logger.info("Waiting for TTS to complete before shutdown...")
+            await asyncio.sleep(2.0)  # Give TTS time to finish speaking
+            
             # Update call status in database
             await async_call_service.end_call(
                 twilio_call_sid=self.call_sid,

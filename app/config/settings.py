@@ -73,6 +73,12 @@ class Settings(BaseSettings):
         
         # Simple acknowledgments
         "got it", "understood", "i see", "i understand", "alright", "fine", "good", "great",
+        
+        # End call phrases (skip RAG for these)
+        "end the call", "end call", "hang up", "goodbye", "bye", "end conversation",
+        "terminate call", "close call", "finish call", "stop call", "disconnect",
+        "that's all", "thank you goodbye", "thanks goodbye", "have a good day",
+        "talk to you later", "see you later", "take care", "farewell",
         "awesome", "cool", "nice", "perfect", "excellent", "wonderful", "amazing",
         
         # Basic questions
