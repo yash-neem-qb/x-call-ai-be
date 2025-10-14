@@ -13,5 +13,5 @@ from ..base_crud import (
 from .campaign_crud import (
     create_campaign, get_campaign, get_campaigns, get_campaigns_count, update_campaign, delete_campaign,
     start_campaign, pause_campaign, resume_campaign, stop_campaign,
-    get_campaign_stats, create_campaign_contact, get_campaign_contacts, update_campaign_contact
+    create_campaign_contact, get_campaign_contacts, update_campaign_contact
 )

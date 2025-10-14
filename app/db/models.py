@@ -627,12 +627,6 @@ class Campaign(Base):
     schedule_type = Column(Enum(CampaignScheduleType), default=CampaignScheduleType.NOW, nullable=False)
     scheduled_at = Column(DateTime, nullable=True)
     
-    # Campaign settings
-    max_calls_per_hour = Column(Integer, default=50, nullable=False)
-    retry_failed_calls = Column(Boolean, default=True, nullable=False)
-    max_retries = Column(Integer, default=3, nullable=False)
-    retry_delay_minutes = Column(Integer, default=30, nullable=False)
-    
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -655,13 +649,6 @@ class CampaignContact(Base):
     phone_number = Column(String(20), nullable=False, index=True)
     name = Column(String(255), nullable=True)
     email = Column(String(255), nullable=True)
-    
-    # Custom fields from CSV
-    custom_field_1 = Column(String(255), nullable=True)
-    custom_field_2 = Column(String(255), nullable=True)
-    custom_field_3 = Column(String(255), nullable=True)
-    custom_field_4 = Column(String(255), nullable=True)
-    custom_field_5 = Column(String(255), nullable=True)
     
     # Contact status
     status = Column(Enum(CampaignContactStatus), default=CampaignContactStatus.PENDING, nullable=False)

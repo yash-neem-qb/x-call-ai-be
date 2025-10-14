@@ -662,69 +662,6 @@ def stop_campaign(db: Session, campaign_id: uuid.UUID, organization_id: uuid.UUI
     return campaign
 
 
-def get_campaign_stats(db: Session, campaign_id: uuid.UUID, organization_id: uuid.UUID):
-    """Get campaign statistics."""
-    campaign = get_campaign(db, campaign_id, organization_id)
-    if not campaign:
-        return None
-    
-    # Get contact counts
-    contact_counts = db.query(
-        CampaignContact.status,
-        func.count(CampaignContact.id).label('count')
-    ).filter(
-        CampaignContact.campaign_id == campaign_id
-    ).group_by(CampaignContact.status).all()
-    
-    # Get call statistics
-    call_stats = db.query(
-        func.count(Call.id).label('total_calls'),
-        func.count(Call.id).filter(Call.status == CallStatus.COMPLETED).label('completed_calls'),
-        func.count(Call.id).filter(Call.status == CallStatus.FAILED).label('failed_calls'),
-        func.sum(Call.duration_seconds).label('total_duration'),
-        func.sum(Call.cost_usd).label('total_cost')
-    ).filter(
-        Call.campaign_id == campaign_id
-    ).first()
-    
-    # Calculate stats
-    stats = {
-        'total_contacts': 0,
-        'pending_contacts': 0,
-        'called_contacts': 0,
-        'completed_contacts': 0,
-        'failed_contacts': 0,
-        'skipped_contacts': 0,
-        'total_calls': call_stats.total_calls or 0,
-        'completed_calls': call_stats.completed_calls or 0,
-        'failed_calls': call_stats.failed_calls or 0,
-        'total_duration': call_stats.total_duration or 0,
-        'total_cost': float(call_stats.total_cost or 0)
-    }
-    
-    # Map contact status counts
-    for status, count in contact_counts:
-        if status == "pending":
-            stats['pending_contacts'] = count
-        elif status == "called":
-            stats['called_contacts'] = count
-        elif status == "completed":
-            stats['completed_contacts'] = count
-        elif status == "failed":
-            stats['failed_contacts'] = count
-        elif status == "skipped":
-            stats['skipped_contacts'] = count
-        stats['total_contacts'] += count
-    
-    # Calculate success rate
-    if stats['total_calls'] > 0:
-        stats['success_rate'] = (stats['completed_calls'] / stats['total_calls']) * 100
-    else:
-        stats['success_rate'] = 0.0
-    
-    return stats
-
-
 def create_campaign_contact(db: Session, contact_data, campaign_id: uuid.UUID):
     """Create a new campaign contact."""
     contact = CampaignContact(
@@ -732,11 +669,6 @@ def create_campaign_contact(db: Session, contact_data, campaign_id: uuid.UUID):
         phone_number=contact_data.phone_number,
         name=contact_data.name,
         email=contact_data.email,
-        custom_field_1=contact_data.custom_field_1,
-        custom_field_2=contact_data.custom_field_2,
-        custom_field_3=contact_data.custom_field_3,
-        custom_field_4=contact_data.custom_field_4,
-        custom_field_5=contact_data.custom_field_5,
         status="pending"
     )
     

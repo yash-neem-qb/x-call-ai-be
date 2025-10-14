@@ -39,11 +39,6 @@ class CampaignContactBase(BaseModel):
     phone_number: str = Field(..., description="Contact phone number")
     name: Optional[str] = Field(None, description="Contact name")
     email: Optional[str] = Field(None, description="Contact email")
-    custom_field_1: Optional[str] = Field(None, description="Custom field 1")
-    custom_field_2: Optional[str] = Field(None, description="Custom field 2")
-    custom_field_3: Optional[str] = Field(None, description="Custom field 3")
-    custom_field_4: Optional[str] = Field(None, description="Custom field 4")
-    custom_field_5: Optional[str] = Field(None, description="Custom field 5")
 
     @validator('phone_number')
     def validate_phone_number(cls, v):
@@ -70,11 +65,6 @@ class CampaignContactUpdate(BaseModel):
     phone_number: Optional[str] = None
     name: Optional[str] = None
     email: Optional[str] = None
-    custom_field_1: Optional[str] = None
-    custom_field_2: Optional[str] = None
-    custom_field_3: Optional[str] = None
-    custom_field_4: Optional[str] = None
-    custom_field_5: Optional[str] = None
     status: Optional[CampaignContactStatus] = None
     call_attempts: Optional[int] = None
     last_call_attempt: Optional[datetime] = None
@@ -107,12 +97,6 @@ class CampaignBase(BaseModel):
     # Scheduling
     schedule_type: CampaignScheduleType = Field(default=CampaignScheduleType.NOW, description="Schedule type")
     scheduled_at: Optional[datetime] = Field(None, description="Scheduled start time")
-    
-    # Campaign settings
-    max_calls_per_hour: int = Field(default=50, ge=1, le=1000, description="Maximum calls per hour")
-    retry_failed_calls: bool = Field(default=True, description="Whether to retry failed calls")
-    max_retries: int = Field(default=3, ge=0, le=10, description="Maximum retry attempts")
-    retry_delay_minutes: int = Field(default=30, ge=5, le=1440, description="Delay between retries in minutes")
 
 
 class CampaignCreate(CampaignBase):
@@ -131,24 +115,6 @@ class CampaignUpdate(BaseModel):
     status: Optional[CampaignStatus] = None
     schedule_type: Optional[CampaignScheduleType] = None
     scheduled_at: Optional[datetime] = None
-    max_calls_per_hour: Optional[int] = Field(None, ge=1, le=1000)
-    retry_failed_calls: Optional[bool] = None
-    max_retries: Optional[int] = Field(None, ge=0, le=10)
-    retry_delay_minutes: Optional[int] = Field(None, ge=5, le=1440)
-
-
-class CampaignStats(BaseModel):
-    """Schema for campaign statistics."""
-    total_contacts: int
-    pending_contacts: int
-    called_contacts: int
-    completed_contacts: int
-    failed_contacts: int
-    skipped_contacts: int
-    total_calls: int
-    success_rate: float
-    total_duration: int
-    total_cost: float
 
 
 class Campaign(CampaignBase):
@@ -161,7 +127,6 @@ class Campaign(CampaignBase):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     contacts: List[CampaignContact] = []
-    stats: Optional[CampaignStats] = None
 
     class Config:
         from_attributes = True

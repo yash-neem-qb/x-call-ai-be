@@ -13,13 +13,13 @@ from app.db.database import get_db
 from app.db.crud.campaign_crud import (
     create_campaign, get_campaign, get_campaigns, get_campaigns_count, update_campaign, delete_campaign,
     start_campaign, pause_campaign, resume_campaign, stop_campaign,
-    get_campaign_stats, create_campaign_contact, get_campaign_contacts, update_campaign_contact
+    create_campaign_contact, get_campaign_contacts, update_campaign_contact
 )
 from app.models.campaign_schemas import (
     Campaign, CampaignCreate, CampaignUpdate, CampaignListResponse,
     CampaignContact, CampaignContactCreate, CampaignContactUpdate,
     CampaignActionRequest, CampaignActionResponse, CSVUploadRequest, CSVUploadResponse,
-    CampaignAnalytics, CampaignStats
+    CampaignAnalytics
 )
 from app.core.auth import require_read_permission, require_write_permission
 
@@ -70,11 +70,6 @@ async def list_campaigns(
             search=search
         )
         
-        # Get stats for each campaign
-        for campaign in campaigns:
-            stats = get_campaign_stats(db, campaign.id, organization.id)
-            if stats:
-                campaign.stats = stats
         
         return CampaignListResponse(
             items=campaigns,
@@ -106,10 +101,6 @@ async def get_campaign_endpoint(
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
         
-        # Get campaign stats
-        stats = get_campaign_stats(db, campaign.id, organization.id)
-        if stats:
-            campaign.stats = stats
         
         return campaign
         
@@ -387,54 +378,6 @@ async def get_campaign_contacts_endpoint(
         raise HTTPException(status_code=500, detail="Failed to fetch campaign contacts")
 
 
-@router.get("/{campaign_id}/analytics", response_model=CampaignAnalytics)
-async def get_campaign_analytics(
-    campaign_id: uuid.UUID,
-    organization_id: uuid.UUID,
-    org_data: tuple = Depends(require_read_permission()),
-    db: Session = Depends(get_db)
-):
-    """
-    Get analytics for a campaign.
-    """
-    try:
-        organization, membership = org_data
-        
-        # Verify campaign exists and belongs to organization
-        campaign = get_campaign(db, campaign_id, organization.id)
-        if not campaign:
-            raise HTTPException(status_code=404, detail="Campaign not found")
-        
-        # Get campaign stats
-        stats = get_campaign_stats(db, campaign_id, organization.id)
-        if not stats:
-            raise HTTPException(status_code=404, detail="Campaign statistics not found")
-        
-        # TODO: Implement detailed analytics (calls by hour, status, etc.)
-        analytics = CampaignAnalytics(
-            campaign_id=campaign_id,
-            total_contacts=stats.total_contacts,
-            total_calls=stats.total_calls,
-            completed_calls=stats.completed_calls,
-            failed_calls=stats.failed_calls,
-            success_rate=stats.success_rate,
-            average_duration=stats.total_duration / stats.total_calls if stats.total_calls > 0 else 0,
-            total_duration=stats.total_duration,
-            total_cost=stats.total_cost,
-            calls_by_hour=[],  # TODO: Implement
-            calls_by_status=[],  # TODO: Implement
-            top_performing_assistants=[],  # TODO: Implement
-            created_at=campaign.created_at,
-            updated_at=campaign.updated_at
-        )
-        
-        return analytics
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching campaign analytics: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch campaign analytics")
 
 
 @router.post("/{campaign_id}/upload-csv", response_model=CSVUploadResponse)

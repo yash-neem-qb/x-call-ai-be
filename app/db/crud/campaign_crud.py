@@ -11,14 +11,23 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.models import Campaign, CampaignContact, CampaignStatus, CampaignScheduleType, CampaignContactStatus
 from app.models.campaign_schemas import (
-    CampaignCreate, CampaignUpdate, CampaignContactCreate, CampaignContactUpdate,
-    CampaignStats
+    CampaignCreate, CampaignUpdate, CampaignContactCreate, CampaignContactUpdate
 )
 
 
 def create_campaign(db: Session, campaign_data: CampaignCreate, organization_id: uuid.UUID) -> Campaign:
     """Create a new campaign with contacts."""
     try:
+        # Handle scheduling logic
+        scheduled_at = campaign_data.scheduled_at
+        if campaign_data.schedule_type == CampaignScheduleType.NOW:
+            # For "Send Now", use current time
+            scheduled_at = datetime.utcnow()
+        elif campaign_data.schedule_type == CampaignScheduleType.SCHEDULED:
+            # For "Schedule for later", use the provided scheduled_at time
+            if not scheduled_at:
+                raise ValueError("scheduled_at is required when schedule_type is SCHEDULED")
+        
         # Create campaign
         campaign = Campaign(
             organization_id=organization_id,
@@ -27,11 +36,7 @@ def create_campaign(db: Session, campaign_data: CampaignCreate, organization_id:
             assistant_id=campaign_data.assistant_id,
             phone_number_id=campaign_data.phone_number_id,
             schedule_type=campaign_data.schedule_type,
-            scheduled_at=campaign_data.scheduled_at,
-            max_calls_per_hour=campaign_data.max_calls_per_hour,
-            retry_failed_calls=campaign_data.retry_failed_calls,
-            max_retries=campaign_data.max_retries,
-            retry_delay_minutes=campaign_data.retry_delay_minutes,
+            scheduled_at=scheduled_at,
             status=CampaignStatus.DRAFT
         )
         
@@ -46,11 +51,6 @@ def create_campaign(db: Session, campaign_data: CampaignCreate, organization_id:
                     phone_number=contact_data.phone_number,
                     name=contact_data.name,
                     email=contact_data.email,
-                    custom_field_1=contact_data.custom_field_1,
-                    custom_field_2=contact_data.custom_field_2,
-                    custom_field_3=contact_data.custom_field_3,
-                    custom_field_4=contact_data.custom_field_4,
-                    custom_field_5=contact_data.custom_field_5,
                     status=CampaignContactStatus.PENDING
                 )
                 db.add(contact)
@@ -63,11 +63,6 @@ def create_campaign(db: Session, campaign_data: CampaignCreate, organization_id:
                     phone_number=row_data.get(campaign_data.csv_headers.get('phone_number', 'phone_number'), ''),
                     name=row_data.get(campaign_data.csv_headers.get('name', 'name'), ''),
                     email=row_data.get(campaign_data.csv_headers.get('email', 'email'), ''),
-                    custom_field_1=row_data.get(campaign_data.csv_headers.get('custom_field_1', ''), ''),
-                    custom_field_2=row_data.get(campaign_data.csv_headers.get('custom_field_2', ''), ''),
-                    custom_field_3=row_data.get(campaign_data.csv_headers.get('custom_field_3', ''), ''),
-                    custom_field_4=row_data.get(campaign_data.csv_headers.get('custom_field_4', ''), ''),
-                    custom_field_5=row_data.get(campaign_data.csv_headers.get('custom_field_5', ''), ''),
                     status=CampaignContactStatus.PENDING
                 )
                 db.add(contact)
@@ -230,70 +225,6 @@ def stop_campaign(db: Session, campaign_id: uuid.UUID, organization_id: uuid.UUI
     return campaign
 
 
-def get_campaign_stats(db: Session, campaign_id: uuid.UUID, organization_id: uuid.UUID) -> Optional[CampaignStats]:
-    """Get campaign statistics."""
-    campaign = get_campaign(db, campaign_id, organization_id)
-    if not campaign:
-        return None
-    
-    # Get contact counts
-    contact_counts = db.query(
-        CampaignContact.status,
-        func.count(CampaignContact.id).label('count')
-    ).filter(
-        CampaignContact.campaign_id == campaign_id
-    ).group_by(CampaignContact.status).all()
-    
-    # Get call statistics
-    from app.db.models import Call, CallStatus
-    call_stats = db.query(
-        func.count(Call.id).label('total_calls'),
-        func.count(Call.id).filter(Call.status == CallStatus.COMPLETED).label('completed_calls'),
-        func.count(Call.id).filter(Call.status == CallStatus.FAILED).label('failed_calls'),
-        func.sum(Call.duration_seconds).label('total_duration'),
-        func.sum(Call.cost_usd).label('total_cost')
-    ).filter(
-        Call.campaign_id == campaign_id
-    ).first()
-    
-    # Calculate stats
-    stats = {
-        'total_contacts': 0,
-        'pending_contacts': 0,
-        'called_contacts': 0,
-        'completed_contacts': 0,
-        'failed_contacts': 0,
-        'skipped_contacts': 0,
-        'total_calls': call_stats.total_calls or 0,
-        'completed_calls': call_stats.completed_calls or 0,
-        'failed_calls': call_stats.failed_calls or 0,
-        'total_duration': call_stats.total_duration or 0,
-        'total_cost': float(call_stats.total_cost or 0)
-    }
-    
-    # Map contact status counts
-    for status, count in contact_counts:
-        if status == CampaignContactStatus.PENDING:
-            stats['pending_contacts'] = count
-        elif status == CampaignContactStatus.CALLED:
-            stats['called_contacts'] = count
-        elif status == CampaignContactStatus.COMPLETED:
-            stats['completed_contacts'] = count
-        elif status == CampaignContactStatus.FAILED:
-            stats['failed_contacts'] = count
-        elif status == CampaignContactStatus.SKIPPED:
-            stats['skipped_contacts'] = count
-        stats['total_contacts'] += count
-    
-    # Calculate success rate
-    if stats['total_calls'] > 0:
-        stats['success_rate'] = (stats['completed_calls'] / stats['total_calls']) * 100
-    else:
-        stats['success_rate'] = 0.0
-    
-    return CampaignStats(**stats)
-
-
 # Campaign Contact CRUD Operations
 def create_campaign_contact(db: Session, contact_data: CampaignContactCreate, campaign_id: uuid.UUID) -> CampaignContact:
     """Create a new campaign contact."""
@@ -302,11 +233,6 @@ def create_campaign_contact(db: Session, contact_data: CampaignContactCreate, ca
         phone_number=contact_data.phone_number,
         name=contact_data.name,
         email=contact_data.email,
-        custom_field_1=contact_data.custom_field_1,
-        custom_field_2=contact_data.custom_field_2,
-        custom_field_3=contact_data.custom_field_3,
-        custom_field_4=contact_data.custom_field_4,
-        custom_field_5=contact_data.custom_field_5,
         status=CampaignContactStatus.PENDING
     )
     
