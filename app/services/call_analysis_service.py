@@ -96,7 +96,7 @@ class CallAnalysisService:
             # Check if we have transcript data to analyze
             if not transcript_data or len(transcript_data) == 0:
                 logger.warning("No transcript data available for analysis")
-                return self._get_default_analysis_result()
+                return self._get_default_comprehensive_analysis_result()
             
             # Convert transcript to conversation format
             conversation = self._format_transcript_for_analysis(transcript_data)
@@ -104,18 +104,16 @@ class CallAnalysisService:
             # Check if conversation is empty after formatting
             if not conversation.strip():
                 logger.warning("Empty conversation after formatting transcript data")
-                return self._get_default_analysis_result()
+                return self._get_default_comprehensive_analysis_result()
             
-            # Perform all analyses in parallel for efficiency
-            success_task = asyncio.create_task(self._analyze_call_success(conversation, system_prompt))
-            summary_task = asyncio.create_task(self._generate_call_summary(conversation, system_prompt))
-            sentiment_task = asyncio.create_task(self._analyze_sentiment(conversation))
-            detailed_task = asyncio.create_task(self._generate_detailed_analysis(conversation, system_prompt))
+            # Perform comprehensive analysis in a single API call for efficiency
+            comprehensive_analysis = await self._perform_comprehensive_analysis(conversation, system_prompt)
             
-            # Wait for all analyses to complete
-            call_success, call_summary, sentiment_score, detailed_analysis = await asyncio.gather(
-                success_task, summary_task, sentiment_task, detailed_task
-            )
+            # Extract individual results from comprehensive analysis
+            call_success = comprehensive_analysis.get("call_success", False)
+            call_summary = comprehensive_analysis.get("call_summary", "")
+            sentiment_score = comprehensive_analysis.get("sentiment_score", 0.0)
+            detailed_analysis = comprehensive_analysis.get("detailed_analysis", {})
             
             # Create analysis metadata
             analysis_metadata = {
@@ -185,209 +183,94 @@ class CallAnalysisService:
         
         return "\n".join(conversation_parts)
     
-    async def _analyze_call_success(self, conversation: str, system_prompt: str) -> bool:
-        """
-        Analyze whether the call was successful based on the conversation and system prompt.
-        
-        Args:
-            conversation: Formatted conversation text
-            system_prompt: The system prompt that defined the assistant's purpose
-            
-        Returns:
-            bool: True if the call was successful, False otherwise
-        """
-        try:
-            prompt = f"""
-You are analyzing a customer service call to determine if it was successful.
-
-System Prompt (Assistant's Purpose):
-{system_prompt}
-
-Call Transcript:
-{conversation}
-
-Based on the system prompt and the conversation, determine if this call was successful. Consider:
-1. Did the assistant fulfill its intended purpose as defined in the system prompt?
-2. Was the customer's issue resolved or their request fulfilled?
-3. Did the conversation end positively?
-4. Were there any clear indicators of success (ticket created, problem solved, information provided, etc.)?
-
-Respond with ONLY "SUCCESS" or "FAILURE" - no other text.
-"""
-            
-            response = await self._make_openai_request(prompt, max_tokens=10)
-            result = response.strip().upper()
-            
-            return result == "SUCCESS"
-            
-        except Exception as e:
-            logger.error(f"Error analyzing call success: {e}")
-            return False
     
-    async def _generate_call_summary(self, conversation: str, system_prompt: str) -> str:
+    async def _perform_comprehensive_analysis(self, conversation: str, system_prompt: str) -> Dict[str, Any]:
         """
-        Generate a concise summary of the call.
+        Perform comprehensive call analysis in a single API call.
         
         Args:
             conversation: Formatted conversation text
-            system_prompt: The system prompt that defined the assistant's purpose
+            system_prompt: System prompt for context
             
         Returns:
-            str: Concise summary of the call
+            Dictionary containing all analysis results
         """
         try:
             prompt = f"""
-You are summarizing a customer service call.
+Analyze the following call conversation and provide a comprehensive analysis in JSON format.
 
-System Prompt (Assistant's Purpose):
-{system_prompt}
+System Context: {system_prompt}
 
-Call Transcript:
+Conversation:
 {conversation}
 
-Generate a concise summary (2-3 sentences) that captures:
-1. What the customer wanted/needed
-2. How the assistant helped
-3. The outcome of the call
-
-Keep it professional and factual. Do not include timestamps or speaker labels.
-"""
-            
-            response = await self._make_openai_request(prompt, max_tokens=150)
-            return response.strip()
-            
-        except Exception as e:
-            logger.error(f"Error generating call summary: {e}")
-            return "Summary generation failed due to error."
-    
-    async def _analyze_sentiment(self, conversation: str) -> float:
-        """
-        Analyze the overall sentiment of the call.
-        
-        Args:
-            conversation: Formatted conversation text
-            
-        Returns:
-            float: Sentiment score from 0.0 (negative) to 1.0 (positive)
-        """
-        try:
-            prompt = f"""
-You are analyzing the sentiment of a customer service call.
-
-Call Transcript:
-{conversation}
-
-Analyze the overall sentiment of this conversation. Consider:
-1. Customer's emotional state throughout the call
-2. Tone of the conversation
-3. Satisfaction indicators
-4. Overall mood and outcome
-
-Respond with ONLY a number between 0.0 and 1.0 where:
-- 0.0 = Very negative (angry, frustrated, disappointed)
-- 0.5 = Neutral (neither positive nor negative)
-- 1.0 = Very positive (happy, satisfied, pleased)
-
-Examples:
-- 0.2 = Customer was frustrated and issue not resolved
-- 0.5 = Neutral conversation, standard interaction
-- 0.8 = Customer was satisfied with the service
-- 1.0 = Customer was very happy and grateful
-
-Respond with ONLY the number, no other text.
-"""
-            
-            response = await self._make_openai_request(prompt, max_tokens=10)
-            
-            try:
-                score = float(response.strip())
-                # Ensure score is within valid range
-                return max(0.0, min(1.0, score))
-            except ValueError:
-                logger.warning(f"Invalid sentiment score received: {response}")
-                return 0.5  # Default to neutral
-                
-        except Exception as e:
-            logger.error(f"Error analyzing sentiment: {e}")
-            return 0.5  # Default to neutral
-    
-    async def _generate_detailed_analysis(self, conversation: str, system_prompt: str) -> Dict[str, Any]:
-        """
-        Generate detailed analysis data for the UI including sentiment breakdown and conversation metrics.
-        
-        Args:
-            conversation: Formatted conversation text
-            system_prompt: The system prompt that defined the assistant's purpose
-            
-        Returns:
-            Dict[str, Any]: Detailed analysis data
-        """
-        try:
-            prompt = f"""
-You are analyzing a customer service call to provide detailed insights.
-
-System Prompt (Assistant's Purpose):
-{system_prompt}
-
-Call Transcript:
-{conversation}
-
-Provide a detailed analysis in JSON format with the following structure:
+Please provide a JSON response with the following structure:
 {{
-    "sentiment_breakdown": {{
-        "customer_sentiment": "positive/negative/neutral",
-        "assistant_performance": "excellent/good/average/poor",
-        "overall_tone": "professional/friendly/formal/casual",
-        "emotional_indicators": ["frustrated", "satisfied", "confused", "grateful", etc.]
-    }},
-    "conversation_metrics": {{
-        "resolution_quality": "resolved/partially_resolved/not_resolved",
-        "response_time": "fast/adequate/slow",
-        "communication_effectiveness": "clear/unclear/mixed",
-        "customer_satisfaction_indicators": ["thankful", "complaining", "asking_follow_up", etc.]
-    }},
-    "key_topics": ["topic1", "topic2", "topic3"],
-    "action_items": ["item1", "item2", "item3"],
-    "improvement_suggestions": ["suggestion1", "suggestion2"]
+    "call_success": boolean,
+    "call_summary": "Brief summary of the call",
+    "sentiment_score": float (0.0 to 1.0, where 1.0 is most positive),
+    "detailed_analysis": {{
+        "key_topics": ["topic1", "topic2"],
+        "customer_satisfaction": "high/medium/low",
+        "resolution_status": "resolved/partially_resolved/not_resolved",
+        "improvement_suggestions": ["suggestion1", "suggestion2"]
+    }}
 }}
 
-Respond with ONLY the JSON object, no other text.
+Guidelines:
+- call_success: true if the customer's main concern was addressed
+- call_summary: 1-2 sentences summarizing the call outcome
+- sentiment_score: 0.0 (negative) to 1.0 (positive)
+- key_topics: Main topics discussed
+- customer_satisfaction: Overall customer satisfaction level
+- resolution_status: Whether the customer's issue was resolved
+- improvement_suggestions: Specific suggestions for better call handling
 """
+
+            response_text = await self._make_openai_request(prompt, max_tokens=500)
             
-            response = await self._make_openai_request(prompt, max_tokens=500)
+            # Parse JSON response - handle potential formatting issues
+            import json
+            import re
             
             try:
-                import json
-                detailed_data = json.loads(response.strip())
-                return detailed_data
-            except json.JSONDecodeError:
-                logger.warning(f"Invalid JSON response for detailed analysis: {response}")
-                return self._get_default_detailed_analysis()
+                # Clean the response text to extract JSON
+                cleaned_text = response_text.strip()
+                
+                # Try to find JSON object in the response
+                json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    analysis_result = json.loads(json_str)
+                    return analysis_result
+                else:
+                    # Try parsing the entire response as JSON
+                    analysis_result = json.loads(cleaned_text)
+                    return analysis_result
+                    
+            except (json.JSONDecodeError, AttributeError) as e:
+                logger.warning(f"Failed to parse comprehensive analysis JSON: {e}")
+                logger.warning(f"Raw response: {response_text[:200]}...")
+                return self._get_default_comprehensive_analysis()
                 
         except Exception as e:
-            logger.error(f"Error generating detailed analysis: {e}")
-            return self._get_default_detailed_analysis()
+            logger.error(f"Error in comprehensive analysis: {e}")
+            return self._get_default_comprehensive_analysis()
     
-    def _get_default_detailed_analysis(self) -> Dict[str, Any]:
-        """Get default detailed analysis data when analysis fails."""
+    def _get_default_comprehensive_analysis(self) -> Dict[str, Any]:
+        """Get default comprehensive analysis result."""
         return {
-            "sentiment_breakdown": {
-                "customer_sentiment": "neutral",
-                "assistant_performance": "average",
-                "overall_tone": "professional",
-                "emotional_indicators": []
-            },
-            "conversation_metrics": {
-                "resolution_quality": "unknown",
-                "response_time": "unknown",
-                "communication_effectiveness": "unknown",
-                "customer_satisfaction_indicators": []
-            },
-            "key_topics": [],
-            "action_items": [],
-            "improvement_suggestions": []
+            "call_success": False,
+            "call_summary": "Analysis unavailable",
+            "sentiment_score": 0.5,
+            "detailed_analysis": {
+                "key_topics": [],
+                "customer_satisfaction": "unknown",
+                "resolution_status": "unknown",
+                "improvement_suggestions": []
+            }
         }
-    
+
     async def _make_openai_request(self, prompt: str, max_tokens: int = 100) -> str:
         """
         Make a request to OpenAI API.
@@ -424,7 +307,7 @@ Respond with ONLY the JSON object, no other text.
             logger.error(f"OpenAI API request failed: {e}")
             raise
     
-    def _get_default_analysis_result(self) -> CallAnalysisResult:
+    def _get_default_comprehensive_analysis_result(self) -> CallAnalysisResult:
         """
         Get default analysis result for calls with no transcript data.
         
@@ -443,20 +326,9 @@ Respond with ONLY the JSON object, no other text.
                 "note": "Default analysis due to missing transcript data"
             },
             detailed_analysis={
-                "sentiment_breakdown": {
-                    "customer_sentiment": "Unknown - No transcript data",
-                    "assistant_performance": "Unknown - No transcript data", 
-                    "overall_tone": "Unknown - No transcript data",
-                    "emotional_indicators": []
-                },
-                "conversation_metrics": {
-                    "resolution_quality": "Unknown - No transcript data",
-                    "response_time": "Unknown - No transcript data",
-                    "communication_effectiveness": "Unknown - No transcript data",
-                    "customer_satisfaction_indicators": []
-                },
                 "key_topics": [],
-                "action_items": ["Investigate why no transcript was captured"],
+                "customer_satisfaction": "unknown",
+                "resolution_status": "unknown",
                 "improvement_suggestions": ["Ensure proper transcript capture for future calls"]
             }
         )

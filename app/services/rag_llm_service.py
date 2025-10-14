@@ -5,10 +5,10 @@ Integrates knowledge base retrieval with LLM response generation for intelligent
 
 import logging
 import time
-from typing import List, Dict, Any, Optional, Callable, Coroutine
+from typing import List, Dict, Any, Optional, Callable, Coroutine, Union
 from dataclasses import dataclass
 
-from app.services.llm_service import openai_llm_service
+from app.services.llm_service import openai_llm_service, EndCallResult
 from app.services.knowledge_service import knowledge_service
 from app.db.crud.tool_crud import get_assistant_tools
 from app.db.database import get_db
@@ -87,7 +87,7 @@ class RAGEnhancedLLMService:
         organization_id: str = None,
         assistant_id: str = None,
         should_stop: Optional[Callable[[], bool]] = None
-    ) -> str:
+    ) -> Union[str, EndCallResult]:
         """
         Generate an AI response using RAG (Retrieval-Augmented Generation).
         

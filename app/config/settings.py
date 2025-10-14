@@ -91,6 +91,16 @@ class Settings(BaseSettings):
     rag_min_query_length: int = 10  # Minimum characters for knowledge base search
     rag_require_meaningful_words: bool = True  # Skip if only casual words detected
     
+    # Built-in End Call Configuration
+    end_call_enabled: bool = True  # Enable built-in end call functionality
+    end_call_phrases: list = [
+        "end the call", "end call", "hang up", "goodbye", "bye", "end conversation",
+        "terminate call", "close call", "finish call", "stop call", "disconnect",
+        "that's all", "thank you goodbye", "thanks goodbye", "have a good day",
+        "talk to you later", "see you later", "take care", "farewell"
+    ]
+    end_call_end_reason: str = "user_hangup"  # End reason for call termination
+    
     # JWT Configuration
     jwt_secret_key: str = "your-secret-key-here"  # In production, use a secure secret key
     jwt_algorithm: str = "HS256"

@@ -7,13 +7,24 @@ import json
 import logging
 import aiohttp
 import openai
-from typing import Optional, Dict, Any, Callable, Coroutine, List
+from typing import Optional, Dict, Any, Callable, Coroutine, List, Union
+from dataclasses import dataclass
 
 from app.config.settings import settings
 from app.db.models import AssistantTool
 from app.services.tool_execution_service import tool_execution_service
+from app.services.end_call_service import end_call_service
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class EndCallResult:
+    """Result when user requests to end the call."""
+    should_end: bool = True
+    response: str = ""
+    end_reason: str = "call_end_requested"
+    metadata: Dict[str, Any] = None
 
 
 class OpenAILLMService:
@@ -42,7 +53,7 @@ class OpenAILLMService:
                                model: str = None,
                                max_tokens: int = None,
                                temperature: float = None,
-                               should_stop: Optional[Callable[[], bool]] = None) -> str:
+                               should_stop: Optional[Callable[[], bool]] = None) -> Union[str, EndCallResult]:
         """
         Generate an AI response to the given text.
         
@@ -56,9 +67,25 @@ class OpenAILLMService:
             temperature: Temperature for response generation (required)
             
         Returns:
-            str: The complete generated response
+            Union[str, EndCallResult]: The complete generated response or end call result
         """
         try:
+            # Check for end call request first
+            if end_call_service.should_end_call(text):
+                logger.info(f"End call request detected: '{text[:50]}...'")
+                end_response = end_call_service.get_end_call_response(text)
+                
+                # Send the goodbye response
+                if on_content_delta:
+                    await on_content_delta(end_response)
+                
+                return EndCallResult(
+                    should_end=True,
+                    response=end_response,
+                    end_reason=end_call_service.end_reason,
+                    metadata=end_call_service.get_end_call_metadata()
+                )
+            
             # Validate required parameters
             if not model:
                 raise ValueError("Model is required")
@@ -162,7 +189,7 @@ class OpenAILLMService:
         max_tokens: int = None,
         temperature: float = None,
         should_stop: Optional[Callable[[], bool]] = None
-    ) -> str:
+    ) -> Union[str, EndCallResult]:
         """
         Generate an AI response with tool calling capabilities.
         
@@ -178,9 +205,25 @@ class OpenAILLMService:
             should_stop: Optional callback to check if generation should stop
             
         Returns:
-            str: The complete generated response
+            Union[str, EndCallResult]: The complete generated response or end call result
         """
         try:
+            # Check for end call request first
+            if end_call_service.should_end_call(text):
+                logger.info(f"End call request detected in tool-enabled response: '{text[:50]}...'")
+                end_response = end_call_service.get_end_call_response(text)
+                
+                # Send the goodbye response
+                if on_content_delta:
+                    await on_content_delta(end_response)
+                
+                return EndCallResult(
+                    should_end=True,
+                    response=end_response,
+                    end_reason=end_call_service.end_reason,
+                    metadata=end_call_service.get_end_call_metadata()
+                )
+            
             # Validate required parameters
             if not model:
                 raise ValueError("Model is required")

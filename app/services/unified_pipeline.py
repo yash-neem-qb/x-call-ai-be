@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional, Callable, Coroutine
 from dataclasses import dataclass, field
 
 from app.services.deepgram_stt_service import deepgram_stt_service
-from app.services.llm_service import openai_llm_service
+from app.services.llm_service import openai_llm_service, EndCallResult
 from app.services.rag_llm_service import get_rag_llm_service, RAGConfig
 from app.services.tts_service import elevenlabs_tts_service
 from app.services.async_call_service import async_call_service
@@ -326,7 +326,12 @@ class UnifiedCallPipeline:
             bool: True if audio was processed successfully
         """
         if self.state == PipelineState.SHUTDOWN:
-            logger.warning(f"Pipeline is shutting down, ignoring audio for call: {self.call_sid}")
+            # Reduce log noise during shutdown - only log occasionally
+            if not hasattr(self, '_shutdown_warning_count'):
+                self._shutdown_warning_count = 0
+            self._shutdown_warning_count += 1
+            if self._shutdown_warning_count <= 3:  # Only log first 3 warnings
+                logger.warning(f"Pipeline is shutting down, ignoring audio for call: {self.call_sid}")
             return False
         
         try:
@@ -562,6 +567,19 @@ class UnifiedCallPipeline:
                         temperature=self.config.llm_temperature
                     )
                 
+                # Check if this is an end call request
+                if isinstance(response, EndCallResult):
+                    logger.info(f"End call request detected - Reason: {response.end_reason}")
+                    
+                    # Mark LLM completion time
+                    llm_end_time = time.monotonic()
+                    self.metrics.llm_latency = (llm_end_time - llm_start_time) * 1000
+                    logger.info(f"⏱️ LLM completed in {self.metrics.llm_latency:.1f}ms for call {self.call_sid}")
+                    
+                    # End the call with the specified reason
+                    await self._end_call_gracefully(response.end_reason, response.response)
+                    return
+                
                 # Mark LLM completion time
                 llm_end_time = time.monotonic()
                 self.metrics.llm_latency = (llm_end_time - llm_start_time) * 1000
@@ -599,7 +617,8 @@ class UnifiedCallPipeline:
                 ))
                 
                 # Send final assistant message to frontend if text callback is available
-                if self.text_callback and self.is_web_stream:
+                # Skip this for end call responses as they're handled separately
+                if self.text_callback and self.is_web_stream and not isinstance(response, EndCallResult):
                     await self.text_callback("assistant_streaming", response, is_final=True)
                 
                 # Update metrics
@@ -717,6 +736,55 @@ class UnifiedCallPipeline:
         else:
             # Other errors might require pipeline restart
             logger.error(f"Unrecoverable pipeline error for call {self.call_sid}")
+    
+    async def _end_call_gracefully(self, end_reason: str, goodbye_message: str = ""):
+        """
+        End the call gracefully with the specified reason.
+        
+        Args:
+            end_reason: Reason for ending the call
+            goodbye_message: Optional goodbye message to send before ending
+        """
+        try:
+            logger.info(f"Ending call gracefully - Reason: {end_reason}")
+            
+            # Send goodbye message if provided
+            if goodbye_message:
+                logger.info(f"Sending goodbye message: '{goodbye_message[:50]}...'")
+                
+                # Send goodbye message via TTS (works for both web and phone calls)
+                await elevenlabs_tts_service.speak_text(
+                    self.tts_session_id, 
+                    goodbye_message, 
+                    is_final=True
+                )
+                
+            # Also send to web frontend if this is a web stream
+            if self.text_callback and self.is_web_stream:
+                # Send goodbye message as final assistant message
+                await self.text_callback("assistant_streaming", goodbye_message, is_final=True)
+                # Send call end notification to frontend
+                await self.text_callback("call_ended", end_reason, True)
+            
+            # Update call status in database
+            await async_call_service.end_call(
+                twilio_call_sid=self.call_sid,
+                end_reason=end_reason,
+                duration_seconds=None  # Will be calculated by the service
+            )
+            
+            # Shutdown the pipeline
+            await self.shutdown()
+            
+            logger.info(f"Call ended gracefully - SID: {self.call_sid}, Reason: {end_reason}")
+            
+        except Exception as e:
+            logger.error(f"Error ending call gracefully: {e}")
+            # Still try to shutdown the pipeline
+            try:
+                await self.shutdown()
+            except Exception as shutdown_error:
+                logger.error(f"Error during pipeline shutdown: {shutdown_error}")
     
     async def shutdown(self):
         """Shutdown the pipeline and cleanup all resources including audio and memory."""

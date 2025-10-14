@@ -89,12 +89,22 @@ async def handle_webrtc_signaling(
         async def send_text_to_client(message_type: str, content: str, is_final: bool = False):
             """Send text message to WebRTC client."""
             try:
-                await websocket.send_json({
-                    "type": "text",
-                    "messageType": message_type,
-                    "content": content,
-                    "isFinal": is_final
-                })
+                if message_type == "call_ended":
+                    # Send call end notification to frontend
+                    await websocket.send_json({
+                        "type": "call_ended",
+                        "reason": content,
+                        "message": "Call has ended"
+                    })
+                    logger.info(f"Sent call end notification to frontend: {content}")
+                else:
+                    # Regular text message
+                    await websocket.send_json({
+                        "type": "text",
+                        "messageType": message_type,
+                        "content": content,
+                        "isFinal": is_final
+                    })
             except Exception as e:
                 logger.error(f"Error sending text to WebRTC client: {e}")
         
