@@ -502,11 +502,6 @@ def create_campaign(db: Session, campaign_data, organization_id: uuid.UUID):
                     phone_number=contact_data.phone_number,
                     name=contact_data.name,
                     email=contact_data.email,
-                    custom_field_1=contact_data.custom_field_1,
-                    custom_field_2=contact_data.custom_field_2,
-                    custom_field_3=contact_data.custom_field_3,
-                    custom_field_4=contact_data.custom_field_4,
-                    custom_field_5=contact_data.custom_field_5,
                     status="pending"
                 )
                 db.add(contact)

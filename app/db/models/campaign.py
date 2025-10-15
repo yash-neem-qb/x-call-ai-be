@@ -74,13 +74,6 @@ class CampaignContact(Base):
     name = Column(String(255), nullable=True)
     email = Column(String(255), nullable=True)
     
-    # Custom fields from CSV
-    custom_field_1 = Column(String(255), nullable=True)
-    custom_field_2 = Column(String(255), nullable=True)
-    custom_field_3 = Column(String(255), nullable=True)
-    custom_field_4 = Column(String(255), nullable=True)
-    custom_field_5 = Column(String(255), nullable=True)
-    
     # Contact status
     status = Column(String(50), default="pending", nullable=False)  # pending, called, completed, failed, skipped
     call_attempts = Column(Integer, default=0, nullable=False)

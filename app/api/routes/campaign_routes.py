@@ -409,12 +409,7 @@ async def upload_csv_to_campaign(
                 contact_data = CampaignContactCreate(
                     phone_number=row_data.get(csv_data.headers.get('phone_number', 'phone_number'), ''),
                     name=row_data.get(csv_data.headers.get('name', 'name'), ''),
-                    email=row_data.get(csv_data.headers.get('email', 'email'), ''),
-                    custom_field_1=row_data.get(csv_data.headers.get('custom_field_1', ''), ''),
-                    custom_field_2=row_data.get(csv_data.headers.get('custom_field_2', ''), ''),
-                    custom_field_3=row_data.get(csv_data.headers.get('custom_field_3', ''), ''),
-                    custom_field_4=row_data.get(csv_data.headers.get('custom_field_4', ''), ''),
-                    custom_field_5=row_data.get(csv_data.headers.get('custom_field_5', ''), '')
+                    email=row_data.get(csv_data.headers.get('email', 'email'), '')
                 )
                 
                 # Check if contact already exists
@@ -427,12 +422,7 @@ async def upload_csv_to_campaign(
                     # Update existing contact
                     update_data = CampaignContactUpdate(
                         name=contact_data.name,
-                        email=contact_data.email,
-                        custom_field_1=contact_data.custom_field_1,
-                        custom_field_2=contact_data.custom_field_2,
-                        custom_field_3=contact_data.custom_field_3,
-                        custom_field_4=contact_data.custom_field_4,
-                        custom_field_5=contact_data.custom_field_5
+                        email=contact_data.email
                     )
                     update_campaign_contact(db, existing_contact.id, update_data)
                     contacts_updated += 1
