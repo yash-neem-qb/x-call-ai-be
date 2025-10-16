@@ -12,8 +12,9 @@ from app.services.twilio_service import twilio_service
 from app.services.unified_pipeline import unified_pipeline_manager
 from app.db.database import get_db
 from app.db.crud import create_call_log, update_call_log
+from app.db.models import CampaignContact
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,12 @@ async def call_status_webhook(
             except Exception as e:
                 logger.error(f"Failed to queue call end update for {CallSid}: {e}")
             
+            # Update campaign contact status if this is a campaign call
+            try:
+                await _update_campaign_contact_status(CallSid, CallStatus, duration_seconds)
+            except Exception as e:
+                logger.error(f"Failed to update campaign contact status for {CallSid}: {e}")
+            
             # Shutdown the unified pipeline for this call
             await unified_pipeline_manager.remove_pipeline(CallSid)
             
@@ -208,3 +215,62 @@ async def call_status_webhook(
         logger.error(f"Error processing call status webhook: {e}")
         # Still return 200 to Twilio to acknowledge receipt
         return ""
+
+
+async def _update_campaign_contact_status(call_sid: str, call_status: str, duration_seconds: int = None):
+    """
+    Update campaign contact status based on call result.
+    
+    Args:
+        call_sid: Twilio call SID
+        call_status: Final call status from Twilio
+        duration_seconds: Call duration in seconds
+    """
+    try:
+        db = next(get_db())
+        try:
+            # Find the call record
+            from app.db.models import Call
+            call_record = db.query(Call).filter(Call.twilio_call_sid == call_sid).first()
+            
+            if not call_record or not call_record.campaign_id:
+                # Not a campaign call, nothing to update
+                return
+            
+            # Find the campaign contact
+            contact = db.query(CampaignContact).filter(
+                CampaignContact.campaign_id == call_record.campaign_id,
+                CampaignContact.phone_number == call_record.to_number
+            ).first()
+            
+            if not contact:
+                logger.warning(f"No campaign contact found for call {call_sid}")
+                return
+            
+            # Update contact status based on call result
+            if call_status == "completed" and duration_seconds and duration_seconds > 0:
+                # Call was successful
+                contact.status = "completed"
+                logger.info(f"Campaign contact {contact.phone_number} marked as completed")
+            elif call_status in ["busy", "no-answer", "failed", "canceled"]:
+                # Call failed, check if we should retry
+                if contact.call_attempts < 3:  # Max 3 attempts
+                    contact.status = "pending"
+                    contact.next_call_attempt = datetime.utcnow() + timedelta(minutes=30)
+                    logger.info(f"Campaign contact {contact.phone_number} scheduled for retry")
+                else:
+                    contact.status = "failed"
+                    logger.info(f"Campaign contact {contact.phone_number} marked as failed after max attempts")
+            else:
+                # Other statuses, mark as failed
+                contact.status = "failed"
+                logger.info(f"Campaign contact {contact.phone_number} marked as failed")
+            
+            contact.updated_at = datetime.utcnow()
+            db.commit()
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Error updating campaign contact status for call {call_sid}: {e}")

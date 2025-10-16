@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config.settings import settings
 from app.core.logging import setup_logging
-from app.api.routes import call_routes, call_logs_routes, websocket_routes, assistant_routes, inbound_routes, organization_routes, auth_routes, knowledge_routes, dashboard_routes, rag_routes, voice_routes, webrtc_routes, campaign_routes, tool_routes
+from app.api.routes import call_routes, call_logs_routes, websocket_routes, assistant_routes, inbound_routes, organization_routes, auth_routes, knowledge_routes, dashboard_routes, rag_routes, voice_routes, webrtc_routes, campaign_routes, tool_routes, campaign_execution_routes
 # Removed old call_handler - using unified_pipeline_manager now
 from app.db.database import init_db
 
@@ -64,6 +64,11 @@ def create_app() -> FastAPI:
             await async_call_service.start()
             logger.info("✅ Async call service started")
             
+            # Initialize campaign scheduler service
+            from app.services.campaign_scheduler_service import campaign_scheduler
+            await campaign_scheduler.start_scheduler()
+            logger.info("✅ Campaign scheduler service started")
+            
             # Initialize all services in the background
             # This runs asynchronously so the server starts quickly
             # Services are initialized by unified_pipeline_manager when needed
@@ -87,6 +92,11 @@ def create_app() -> FastAPI:
             await async_call_service.stop()
             logger.info("✅ Async call service stopped")
             
+            # Stop campaign scheduler service
+            from app.services.campaign_scheduler_service import campaign_scheduler
+            await campaign_scheduler.stop_scheduler()
+            logger.info("✅ Campaign scheduler service stopped")
+            
             # Close any active calls
             # Cleanup is handled by unified_pipeline_manager
             
@@ -108,6 +118,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_routes.router)
     app.include_router(voice_routes.router)
     app.include_router(campaign_routes.router)
+    app.include_router(campaign_execution_routes.router)
     app.include_router(tool_routes.router)
     # Removed duplicate call-status route; using /api/v1/call-status from call_routes
     

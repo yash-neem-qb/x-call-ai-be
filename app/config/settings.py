@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     
     # Server Configuration
     domain: str = ""
-    port: int = 8000
+    port: int = 9000
     webhook_base_url: Optional[str] = None
     configure_webhooks: bool = False
     
